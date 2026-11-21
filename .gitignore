@@ -1,0 +1,10 @@
+node_modules
+dist
+.vite
+*.tsbuildinfo
+.tcapcut-data
+native/bin
+apps/macos-shell/build
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store

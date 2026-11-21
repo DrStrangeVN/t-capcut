@@ -1,0 +1,24 @@
+{
+  "name": "t-capcut-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "T-CapCut: Local-First Liquid Glass NLE + Hardware VideoToolbox Engine + On-Device AI + ChatCut & MCP",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "dev:engine": "pnpm --filter @t-capcut/engine dev",
+    "dev:studio": "pnpm --filter @t-capcut/studio dev",
+    "dev": "node scripts/dev.mjs",
+    "build:native": "bash scripts/build-native.sh",
+    "build:app": "bash scripts/build-app.sh",
+    "cli": "pnpm --filter @t-capcut/cli start",
+    "mcp": "pnpm --filter @t-capcut/mcp start"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

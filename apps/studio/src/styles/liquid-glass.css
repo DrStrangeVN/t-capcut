@@ -1,0 +1,243 @@
+:root {
+  --obsidian-base: rgba(8, 10, 16, 0.86);
+  --glass-surface: rgba(18, 22, 34, 0.56);
+  --glass-elevated: rgba(28, 34, 52, 0.64);
+  --glass-pill: rgba(22, 27, 42, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-specular: rgba(255, 255, 255, 0.34);
+  --accent-cyan: #22d3ee;
+  --accent-indigo: #6366f1;
+  --accent-amber: #fbbf24;
+  --accent-emerald: #34d399;
+  --accent-rose: #fb7185;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Native desktop transparency + browser fallback deep mesh gradient */
+.tcapcut-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at 14% 12%, rgba(34, 211, 238, 0.12), transparent 36%),
+    radial-gradient(circle at 86% 18%, rgba(99, 102, 241, 0.15), transparent 40%),
+    radial-gradient(circle at 50% 88%, rgba(16, 185, 129, 0.08), transparent 45%),
+    var(--obsidian-base);
+}
+
+.tcapcut-shell.colorist-mode {
+  background: #121212;
+}
+
+/* 4-Layer Obsidian Liquid Glass Panel */
+.liquid-glass-panel {
+  position: relative;
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.015) 42%, rgba(8, 12, 22, 0.55) 100%);
+  background-color: var(--glass-surface);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0.5px var(--glass-specular),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45),
+    0 12px 36px -8px rgba(0, 0, 0, 0.6);
+  border-radius: 16px;
+  backdrop-filter: blur(22px) saturate(165%);
+  -webkit-backdrop-filter: blur(22px) saturate(165%);
+  transition: border-color 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease;
+}
+
+.liquid-glass-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: radial-gradient(
+    260px circle at var(--mx, 50%) var(--my, 0%),
+    rgba(255, 255, 255, 0.28),
+    rgba(34, 211, 238, 0.12) 38%,
+    transparent 70%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Floating Refractive Capsule / HUD (Player transport, Cmd+K ChatCut) */
+.liquid-glass-pill {
+  position: relative;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 50%, rgba(12, 16, 28, 0.72) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.42),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.5),
+    0 18px 42px -10px rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border-radius: 999px;
+  transition: transform 220ms cubic-bezier(0.22, 1.25, 0.36, 1), box-shadow 220ms ease;
+}
+
+.liquid-glass-modal {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.12) 0%, rgba(18, 23, 36, 0.86) 45%, rgba(10, 12, 20, 0.94) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow:
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.36),
+    0 32px 80px rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(36px) saturate(190%);
+  -webkit-backdrop-filter: blur(36px) saturate(190%);
+  border-radius: 22px;
+}
+
+.glass-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  cursor: pointer;
+  transition: all 160ms cubic-bezier(0.22, 1.25, 0.36, 1);
+}
+
+.glass-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 255, 255, 0.28);
+  transform: translateY(-0.5px);
+}
+
+.glass-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.glass-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.glass-btn-primary {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.88), rgba(99, 102, 241, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  color: #03121a;
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 6px 20px rgba(34, 211, 238, 0.28);
+}
+
+.glass-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(56, 224, 248, 0.98), rgba(116, 120, 250, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 8px 24px rgba(34, 211, 238, 0.4);
+}
+
+.glass-btn-active {
+  background: rgba(34, 211, 238, 0.18);
+  border-color: rgba(34, 211, 238, 0.55);
+  color: #67e8f9;
+}
+
+.glass-input,
+.glass-select,
+.glass-textarea {
+  width: 100%;
+  background: rgba(6, 9, 16, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 7px 10px;
+  outline: none;
+  user-select: text;
+  transition: border-color 150ms ease;
+}
+
+.glass-input:focus,
+.glass-select:focus,
+.glass-textarea:focus {
+  border-color: rgba(34, 211, 238, 0.65);
+}
+
+.glass-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  outline: none;
+}
+
+.glass-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffffff, #a5f3fc);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+.glass-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.glass-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.glass-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
+.glass-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* macOS traffic light safe drag bar when hosted inside WKWebView */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-nodrag {
+  -webkit-app-region: no-drag;
+}

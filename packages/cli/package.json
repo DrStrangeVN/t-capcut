@@ -1,0 +1,22 @@
+{
+  "name": "@t-capcut/cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "tcapcut-cli": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "tsc -p tsconfig.json && node --test dist/__tests__/*.test.js"
+  },
+  "dependencies": {
+    "@t-capcut/schema": "workspace:*",
+    "@t-capcut/engine": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
