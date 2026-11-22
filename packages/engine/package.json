@@ -17,6 +17,7 @@
     "test": "tsc -p tsconfig.json && node --test dist/__tests__/*.test.js"
   },
   "dependencies": {
+    "@t-capcut/presets": "workspace:*",
     "@t-capcut/schema": "workspace:*"
   },
   "devDependencies": {

@@ -25,6 +25,7 @@ import {
 } from '@t-capcut/schema';
 import { assetMediaUrl } from '../engine/api';
 import { AudioGraphEngine } from '../engine/AudioGraphEngine';
+import { renderAllOverlays2D } from '../engine/OverlayRenderer';
 import { playbackClock } from '../engine/PlaybackClock';
 import { WebGLCompositor } from '../engine/WebGLCompositor';
 import { useEditorStore } from '../store/useEditorStore';
@@ -68,8 +69,8 @@ type GizmoDragState =
 
 export const PlayerViewport: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const textOverlayContainerRef = useRef<HTMLDivElement | null>(null);
   const timecodeRef = useRef<HTMLSpanElement | null>(null);
   const renderMsRef = useRef<HTMLSpanElement | null>(null);
   const shuttleBadgeRef = useRef<HTMLSpanElement | null>(null);
@@ -82,7 +83,6 @@ export const PlayerViewport: React.FC = () => {
   const mediaSrcSignatureRef = useRef<Map<string, string>>(new Map());
   const maskElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const dragRef = useRef<GizmoDragState | null>(null);
-  const activeTextKeyRef = useRef<string>('');
 
   const project = useEditorStore((s) => s.project);
   const nestedScopeId = useEditorStore((s) => s.nestedScopeId);
@@ -113,7 +113,6 @@ export const PlayerViewport: React.FC = () => {
   const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
 
   const [snapAxes, setSnapAxes] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
-  const [visibleTextClipIds, setVisibleTextClipIds] = useState<string[]>([]);
 
   // Initialize WebGL2 Compositor + WebAudio Graph + dispose on unmount
   useEffect(() => {
@@ -291,27 +290,22 @@ export const PlayerViewport: React.FC = () => {
         shuttleBadgeRef.current.textContent = playing && shuttle !== 1 ? `${shuttle}x` : '';
       }
 
-      // Update visible text clip list ONLY when entering/exiting text boundaries,
-      // and update karaoke word highlights directly on DOM nodes at 120Hz!
-      const nowTextClips = flatClips.filter(
-        (c) => c.kind === 'text' && c.text && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs
-      );
-      const nextTextKey = nowTextClips.map((c) => c.id).join('|');
-      if (nextTextKey !== activeTextKeyRef.current) {
-        activeTextKeyRef.current = nextTextKey;
-        setVisibleTextClipIds(nowTextClips.map((c) => c.id));
-      }
-      if (textOverlayContainerRef.current) {
-        const wordEls = textOverlayContainerRef.current.querySelectorAll<HTMLElement>('[data-wstart]');
-        wordEls.forEach((span) => {
-          const ws = Number(span.dataset.wstart);
-          const we = Number(span.dataset.wend);
-          const activeCol = span.dataset.wactive || '#FFD60A';
-          const baseCol = span.dataset.wbase || '#FFFFFF';
-          const isActive = curUs >= ws && curUs <= we;
-          span.style.color = isActive ? activeCol : baseCol;
-          span.style.transform = isActive ? 'scale(1.12)' : 'scale(1)';
-        });
+      // Render 2D Overlays (25 Text/Karaoke/Lower-Third templates + 24 Stickers & Particle Systems) in lockstep
+      const ovCanvas = overlayCanvasRef.current;
+      if (ovCanvas) {
+        const w = project.settings.width;
+        const h = project.settings.height;
+        if (ovCanvas.width !== w || ovCanvas.height !== h) {
+          ovCanvas.width = w;
+          ovCanvas.height = h;
+        }
+        const ovCtx = ovCanvas.getContext('2d');
+        if (ovCtx) {
+          renderAllOverlays2D(ovCtx, flatClips, curUs, w, h, {
+            selectedClipId: useEditorStore.getState().selectedClipId,
+            burnSubtitles: true,
+          });
+        }
       }
 
       // Active media & audio synchronization per clip.id
@@ -406,7 +400,6 @@ export const PlayerViewport: React.FC = () => {
       )
     : 5 * US_PER_SEC;
 
-  const activeTextClips: Clip[] = effectiveClips.filter((c) => c.kind === 'text' && c.text && visibleTextClipIds.includes(c.id));
   const selectedClip = project && selectedClipId ? project.clips[selectedClipId] : null;
   const aspectRatioCss = project ? `${project.settings.width} / ${project.settings.height}` : '16 / 9';
 
@@ -428,16 +421,25 @@ export const PlayerViewport: React.FC = () => {
       return;
     }
 
+    const rect = stageRef.current?.getBoundingClientRect();
+    const clickNormX = rect ? ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1 : 0;
+    const clickNormY = rect ? ((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1 : 0;
+
+    const activeAll = Object.values(project.clips).filter(
+      (c) => !c.disabled && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs
+    );
+    const overlayHit = activeAll.find(
+      (c) =>
+        (c.kind === 'text' || (c.kind === 'sticker' && !c.sticker?.particleType)) &&
+        Math.abs(clickNormX - c.transform.x) < 0.42 &&
+        Math.abs(clickNormY - c.transform.y) < 0.22
+    );
+
     const hit =
-      selectedClip && curUs >= selectedClip.timelineStartUs && curUs < selectedClip.timelineStartUs + selectedClip.durationUs
+      overlayHit ??
+      (selectedClip && curUs >= selectedClip.timelineStartUs && curUs < selectedClip.timelineStartUs + selectedClip.durationUs
         ? selectedClip
-        : Object.values(project.clips).find(
-            (c) =>
-              !c.disabled &&
-              (c.kind === 'video' || c.kind === 'image' || c.kind === 'text' || c.kind === 'compound') &&
-              curUs >= c.timelineStartUs &&
-              curUs < c.timelineStartUs + c.durationUs
-          );
+        : activeAll.find((c) => c.kind === 'video' || c.kind === 'image' || c.kind === 'compound'));
     if (!hit) return;
     setSelectedClipId(hit.id);
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -656,74 +658,11 @@ export const PlayerViewport: React.FC = () => {
         >
           <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
 
-          {/* Text & 120Hz Direct-DOM Word-by-Word Karaoke Overlay Layer */}
-          <div ref={textOverlayContainerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-            {activeTextClips.map((tc) => {
-              const t = tc.text!;
-              const localUs = curTimeForGizmo - tc.timelineStartUs;
-              const xPct = 50 + getClipPropertyAtTime(tc, 'x', localUs) * 50;
-              const yPct = 50 + getClipPropertyAtTime(tc, 'y', localUs) * 50;
-              const scale = getClipPropertyAtTime(tc, 'scaleX', localUs);
-              const opacity = getClipPropertyAtTime(tc, 'opacity', localUs);
-              const words = t.words && t.words.length > 0 ? t.words : null;
-
-              return (
-                <div
-                  key={tc.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedClipId(tc.id);
-                  }}
-                  style={{
-                    position: 'absolute',
-                    left: `${xPct}%`,
-                    top: `${yPct}%`,
-                    transform: `translate(-50%, -50%) scale(${scale})`,
-                    opacity,
-                    maxWidth: '88%',
-                    textAlign: t.align,
-                    fontFamily: t.fontFamily,
-                    fontSize: `${Math.max(14, t.fontSize * 0.42)}px`,
-                    fontWeight: t.fontWeight,
-                    fontStyle: t.italic ? 'italic' : 'normal',
-                    letterSpacing: `${t.letterSpacing}px`,
-                    lineHeight: t.lineHeight,
-                    padding: `${t.backgroundPadding * 0.45}px ${t.backgroundPadding * 0.75}px`,
-                    borderRadius: `${t.backgroundRadius}px`,
-                    background: t.backgroundColor,
-                    textShadow: `0 ${t.shadowOffsetY}px ${t.shadowBlur}px ${t.shadowColor}`,
-                    WebkitTextStroke: t.strokeWidth > 0 ? `${Math.max(0.5, t.strokeWidth * 0.35)}px ${t.strokeColor}` : undefined,
-                    border: selectedClipId === tc.id ? '1.5px dashed #22d3ee' : 'none',
-                    pointerEvents: 'auto',
-                    display: t.karaokeEnabled && words ? 'inline-flex' : 'block',
-                    flexWrap: 'wrap',
-                    justifyContent: 'center',
-                    alignItems: 'baseline',
-                    gap: '0.34em',
-                  }}
-                >
-                  {t.karaokeEnabled && words
-                    ? words.map((w, wi) => (
-                        <span
-                          key={wi}
-                          data-wstart={w.startUs}
-                          data-wend={w.endUs}
-                          data-wactive={t.karaokeActiveColor}
-                          data-wbase={t.color}
-                          style={{
-                            color: curTimeForGizmo >= w.startUs && curTimeForGizmo <= w.endUs ? t.karaokeActiveColor : t.color,
-                            display: 'inline-block',
-                            transition: 'transform 60ms ease, color 60ms ease',
-                          }}
-                        >
-                          {w.text}
-                        </span>
-                      ))
-                    : <span style={{ color: t.color }}>{t.text}</span>}
-                </div>
-              );
-            })}
-          </div>
+          {/* Unified WYSIWYG 2D Overlay Layer (Stickers + Particles + Text/Karaoke Animations) */}
+          <canvas
+            ref={overlayCanvasRef}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+          />
 
           {/* Interactive On-Canvas Gizmo (Corner Scale + Top Rotate Handle + Magnetic Snap Guides) */}
           {showGizmo && selectedClip && (

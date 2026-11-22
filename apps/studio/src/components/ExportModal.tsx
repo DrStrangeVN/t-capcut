@@ -39,6 +39,17 @@ export const ExportModal: React.FC = () => {
     project.outPointUs != null &&
     project.outPointUs > project.inPointUs + 100_000;
 
+  const requiresWysiwygGpu = Object.values(project.clips).some(
+    (c) =>
+      c.kind === 'sticker' ||
+      c.kind === 'effect' ||
+      c.effects.length > 0 ||
+      Boolean(c.transitionIn && c.transitionIn.type !== 'none') ||
+      c.speed.mode === 'curve' ||
+      c.mask.shape !== 'none' ||
+      Boolean(c.text?.karaokeEnabled)
+  );
+
   const handleExport = async () => {
     setExporting(true);
     setProgressPct(2);
@@ -182,7 +193,7 @@ export const ExportModal: React.FC = () => {
             <Rocket size={13} /> Hardware VideoToolbox (Nhanh)
           </button>
           <button className={`glass-btn ${mode === 'wysiwyg-pipe' ? 'glass-btn-active' : ''}`} onClick={() => setMode('wysiwyg-pipe')}>
-            <Sparkles size={13} color="#a78bfa" /> Exact 100% WYSIWYG GPU Pipe
+            <Sparkles size={13} color="#a78bfa" /> Exact 100% WYSIWYG GPU Pipe {requiresWysiwygGpu ? '★' : ''}
           </button>
           <button className={`glass-btn ${mode === 'lossless-hybrid' ? 'glass-btn-active' : ''}`} onClick={() => setMode('lossless-hybrid')}>
             <Zap size={13} color="#fbbf24" /> Smart Lossless Copy
@@ -194,6 +205,15 @@ export const ExportModal: React.FC = () => {
             Subtitles Only (.SRT / .ASS Karaoke / .VTT)
           </button>
         </div>
+
+        {requiresWysiwygGpu && mode !== 'wysiwyg-pipe' && mode !== 'audio-only' && mode !== 'subtitle-only' && (
+          <div style={{ padding: '7px 10px', borderRadius: 10, background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.35)', fontSize: 11, color: '#ddd6fe', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span>Timeline có Shader VFX / Chuyển cảnh / Sticker / Karaoke động — khuyên dùng GPU WYSIWYG Pipe để giống Preview 100%.</span>
+            <button className="glass-btn" style={{ fontSize: 10.5, padding: '4px 8px', flexShrink: 0 }} onClick={() => setMode('wysiwyg-pipe')}>
+              Chọn WYSIWYG
+            </button>
+          </div>
+        )}
 
         {(mode === 'hardware' || mode === 'lossless-hybrid' || mode === 'wysiwyg-pipe') && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>

@@ -24,8 +24,19 @@ import {
 import { assetMediaUrl, engineApi, type ChatCutLlmConfig, type EngineHealth, type HistoryItem } from '../engine/api';
 import { playbackClock } from '../engine/PlaybackClock';
 import type { LoadedLutTexture } from '../engine/WebGLCompositor';
+import {
+  applyVideoTemplateToProject,
+  buildTextStyleFromPreset,
+  TRANSITION_BY_ID,
+  type AudioPreset,
+  type BuiltinLutPreset,
+  type StickerPreset,
+  type TextPreset,
+  type VideoTemplatePreset,
+  type VfxPreset,
+} from '@t-capcut/presets';
 
-export type LeftPanelTab = 'media' | 'text' | 'effects' | 'transitions' | 'ai';
+export type LeftPanelTab = 'media' | 'audio' | 'text' | 'stickers' | 'effects' | 'transitions' | 'luts' | 'templates' | 'ai';
 export type InspectorTab = 'transform' | 'color' | 'chroma' | 'speed' | 'audio';
 export type TimelineTool = 'select' | 'blade';
 
@@ -59,6 +70,8 @@ interface EditorState {
   loadedLuts: Record<string, LoadedLutTexture>;
   ambientGlowColor: string;
   llmConfig: ChatCutLlmConfig | null;
+  favoritePresetIds: string[];
+  templateModalPreset: VideoTemplatePreset | null;
 
   init: () => Promise<void>;
   selectProject: (id: string) => Promise<void>;
@@ -98,7 +111,22 @@ interface EditorState {
   importCapCutDraftFile: (draftJson: unknown) => Promise<void>;
   addAssetToTimeline: (asset: MediaAsset, targetTrackId?: string, atUs?: Microseconds) => Promise<void>;
   addTextClip: (text?: string, karaokeEnabled?: boolean) => Promise<void>;
+  addTextPresetClip: (preset: TextPreset, textOverride?: string) => Promise<void>;
+  applyKaraokeStyleAll: (preset: TextPreset) => Promise<void>;
+  addStickerClip: (preset: StickerPreset, atUs?: Microseconds) => Promise<void>;
   addEffectClip: (shaderId: string, name: string, customFragmentGlsl?: string) => Promise<void>;
+  addVfxPreset: (vfx: VfxPreset, targetClipId?: string) => Promise<void>;
+  setClipTransition: (clipId: string, transitionId: string, withPairedSfx?: boolean) => Promise<void>;
+  applyBuiltinLut: (lut: BuiltinLutPreset) => Promise<void>;
+  addBuiltinAudioToTimeline: (preset: AudioPreset, atUs?: Microseconds) => Promise<void>;
+  toggleFavoritePreset: (id: string) => void;
+  setTemplateModalPreset: (tpl: VideoTemplatePreset | null) => void;
+  applyTemplateProject: (template: VideoTemplatePreset, slotAssets: Array<MediaAsset | null>) => Promise<void>;
+  importLocalPresetPack: (pack: {
+    packName?: string;
+    luts?: Array<{ id?: string; filename?: string; content: string }>;
+    audioFiles?: Array<{ filename: string; base64: string }>;
+  }) => Promise<void>;
   updateSelectedClip: (label: string, updater: (clip: Clip) => void) => Promise<void>;
   addKeyframeAtPlayhead: (prop: AnimatableProperty, value: number) => Promise<void>;
   moveKeyframeTime: (clipId: string, oldTimeUs: Microseconds, newTimeUs: Microseconds) => Promise<void>;
@@ -188,6 +216,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return null;
     }
   })(),
+  favoritePresetIds: (() => {
+    try {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('tcapcut_favs_v3') : null;
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  })(),
+  templateModalPreset: null,
 
   init: async () => {
     try {
@@ -603,6 +640,436 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     scope.clips[clip.id] = clip;
     await get().commitProject(`Thêm hiệu ứng ${name}`, next);
     set({ selectedClipId: clip.id, selectedClipIds: [clip.id] });
+  },
+
+  addTextPresetClip: async (preset, textOverride) => {
+    const p = get().project;
+    if (!p) return;
+    const next = clone(p);
+    const scope = getActiveScopeMutable(next, get().nestedScopeId);
+    const track = scope.tracks.find((t) => t.type === 'text') ?? scope.tracks[0];
+    const startUs = playbackClock.getTimeUs();
+    const durUs = 3 * US_PER_SEC;
+    const content = textOverride ?? preset.sampleText;
+    const style = buildTextStyleFromPreset(preset, content);
+    if (style.karaokeEnabled) {
+      const wordsRaw = content.trim().split(/\s+/);
+      const step = Math.floor(durUs / Math.max(1, wordsRaw.length));
+      style.words = wordsRaw.map((w, i) => ({
+        text: w,
+        startUs: startUs + i * step,
+        endUs: i === wordsRaw.length - 1 ? startUs + durUs : startUs + (i + 1) * step,
+      }));
+    }
+    const clip: Clip = {
+      id: `txt_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      trackId: track.id,
+      assetId: null,
+      kind: 'text',
+      name: preset.name,
+      timelineStartUs: startUs,
+      durationUs: durUs,
+      sourceStartUs: 0,
+      sourceDurationUs: durUs,
+      locked: false,
+      disabled: false,
+      transform: { ...createDefaultTransform(), y: preset.defaultY },
+      colorGrade: createDefaultColorGrade(),
+      chromaKey: createDefaultChromaKey(),
+      mask: createDefaultMask(),
+      speed: createDefaultSpeed(),
+      audio: createDefaultAudioState(),
+      keyframes: {},
+      text: style,
+      effects: [],
+      aiMattingEnabled: false,
+      autoReframeEnabled: false,
+    };
+    scope.clips[clip.id] = clip;
+    await get().commitProject(`Thêm mẫu chữ ${preset.name}`, next);
+    set({ selectedClipId: clip.id, selectedClipIds: [clip.id], statusMessage: `Đã thêm mẫu chữ "${preset.name}"` });
+  },
+
+  applyKaraokeStyleAll: async (preset) => {
+    const p = get().project;
+    if (!p) return;
+    const next = clone(p);
+    const scope = getActiveScopeMutable(next, get().nestedScopeId);
+    let count = 0;
+    Object.values(scope.clips).forEach((clip) => {
+      if (clip.kind === 'text' && clip.text) {
+        const merged = buildTextStyleFromPreset(preset, clip.text.text);
+        merged.words = clip.text.words;
+        clip.text = merged;
+        count += 1;
+      }
+    });
+    if (count === 0) {
+      await get().addTextPresetClip(preset);
+      return;
+    }
+    await get().commitProject(`Áp dụng Karaoke "${preset.name}" cho ${count} phụ đề`, next);
+    set({ statusMessage: `Đã đồng bộ kiểu Karaoke "${preset.name}" cho ${count} clip chữ!` });
+  },
+
+  addStickerClip: async (preset, atUs) => {
+    const p = get().project;
+    if (!p) return;
+    const next = clone(p);
+    const scope = getActiveScopeMutable(next, get().nestedScopeId);
+    const track =
+      scope.tracks.find((t) => t.type === 'overlay') ??
+      scope.tracks.find((t) => t.type === 'text') ??
+      scope.tracks[0];
+    const startUs = atUs ?? playbackClock.getTimeUs();
+    const clip: Clip = {
+      id: `stk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      trackId: track.id,
+      assetId: null,
+      kind: 'sticker',
+      name: preset.name,
+      timelineStartUs: startUs,
+      durationUs: preset.defaultDurationUs,
+      sourceStartUs: 0,
+      sourceDurationUs: preset.defaultDurationUs,
+      locked: false,
+      disabled: false,
+      transform: { ...createDefaultTransform(), y: preset.category === 'badge' ? -0.3 : 0.25 },
+      colorGrade: createDefaultColorGrade(),
+      chromaKey: createDefaultChromaKey(),
+      mask: createDefaultMask(),
+      speed: createDefaultSpeed(),
+      audio: createDefaultAudioState(),
+      keyframes: {},
+      sticker: { ...preset },
+      effects: [],
+      aiMattingEnabled: false,
+      autoReframeEnabled: false,
+    };
+    scope.clips[clip.id] = clip;
+    await get().commitProject(`Thêm Sticker ${preset.name}`, next);
+    set({ selectedClipId: clip.id, selectedClipIds: [clip.id], statusMessage: `Đã thêm "${preset.name}" vào Timeline` });
+  },
+
+  addVfxPreset: async (vfx, targetClipId) => {
+    const p = get().project;
+    if (!p) return;
+    const next = clone(p);
+    const scope = getActiveScopeMutable(next, get().nestedScopeId);
+    const targetId = targetClipId ?? get().selectedClipId;
+    const targetClip = targetId ? scope.clips[targetId] : undefined;
+
+    if (targetClip && (targetClip.kind === 'video' || targetClip.kind === 'image')) {
+      targetClip.effects = [
+        ...(targetClip.effects ?? []),
+        {
+          id: `fx_inst_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          name: vfx.name,
+          shaderId: vfx.id,
+          intensity: vfx.defaultIntensity,
+          speed: vfx.defaultSpeed,
+          scale: vfx.defaultScale,
+          enabled: true,
+        },
+      ];
+      await get().commitProject(`Gắn VFX ${vfx.name} lên ${targetClip.name}`, next);
+      set({ statusMessage: `Đã xếp chồng GPU VFX "${vfx.name}" lên clip` });
+      return;
+    }
+
+    const track = scope.tracks.find((t) => t.type === 'effect') ?? scope.tracks[0];
+    const startUs = playbackClock.getTimeUs();
+    const clip: Clip = {
+      id: `fx_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      trackId: track.id,
+      assetId: null,
+      kind: 'effect',
+      name: vfx.name,
+      timelineStartUs: startUs,
+      durationUs: 3 * US_PER_SEC,
+      sourceStartUs: 0,
+      sourceDurationUs: 3 * US_PER_SEC,
+      locked: false,
+      disabled: false,
+      transform: createDefaultTransform(),
+      colorGrade: createDefaultColorGrade(),
+      chromaKey: createDefaultChromaKey(),
+      mask: createDefaultMask(),
+      speed: createDefaultSpeed(),
+      audio: createDefaultAudioState(),
+      keyframes: {},
+      effects: [
+        {
+          id: `fx_inst_${Date.now()}`,
+          name: vfx.name,
+          shaderId: vfx.id,
+          intensity: vfx.defaultIntensity,
+          speed: vfx.defaultSpeed,
+          scale: vfx.defaultScale,
+          enabled: true,
+        },
+      ],
+      aiMattingEnabled: false,
+      autoReframeEnabled: false,
+    };
+    scope.clips[clip.id] = clip;
+    await get().commitProject(`Thêm VFX Track ${vfx.name}`, next);
+    set({ selectedClipId: clip.id, selectedClipIds: [clip.id], statusMessage: `Đã thêm GPU VFX "${vfx.name}"` });
+  },
+
+  setClipTransition: async (clipId, transitionId, withPairedSfx = false) => {
+    const p = get().project;
+    if (!p) return;
+    const next = clone(p);
+    const scope = getActiveScopeMutable(next, get().nestedScopeId);
+    const clip = scope.clips[clipId];
+    if (!clip) return;
+
+    const trans = TRANSITION_BY_ID[transitionId];
+    if (!trans || transitionId === 'none') {
+      clip.transitionIn = null;
+      await get().commitProject('Xóa chuyển cảnh', next);
+      return;
+    }
+
+    clip.transitionIn = {
+      id: `tr_${Date.now()}`,
+      name: trans.name,
+      type: trans.id,
+      durationUs: trans.defaultDurationUs,
+    };
+
+    if (withPairedSfx && trans.recommendedSfxId) {
+      try {
+        const res = await engineApi.addBuiltinAudio(trans.recommendedSfxId);
+        next.assets[res.asset.id] = res.asset;
+        const audioTrack = scope.tracks.find((t) => t.type === 'audio') ?? scope.tracks[0];
+        const sfxStart = Math.max(0, clip.timelineStartUs - Math.round(res.asset.durationUs * 0.45));
+        const sfxId = `sfx_tr_${Date.now()}`;
+        scope.clips[sfxId] = {
+          id: sfxId,
+          trackId: audioTrack.id,
+          assetId: res.asset.id,
+          kind: 'audio',
+          name: res.asset.name,
+          timelineStartUs: sfxStart,
+          durationUs: res.asset.durationUs,
+          sourceStartUs: 0,
+          sourceDurationUs: res.asset.durationUs,
+          locked: false,
+          disabled: false,
+          transform: createDefaultTransform(),
+          colorGrade: createDefaultColorGrade(),
+          chromaKey: createDefaultChromaKey(),
+          mask: createDefaultMask(),
+          speed: createDefaultSpeed(),
+          audio: { ...createDefaultAudioState(), volume: 0.9 },
+          keyframes: {},
+          effects: [],
+          aiMattingEnabled: false,
+          autoReframeEnabled: false,
+        };
+      } catch {
+        // non-fatal if SFX asset fails
+      }
+    }
+
+    await get().commitProject(`Chuyển cảnh: ${trans.name}`, next);
+    set({ statusMessage: `Đã gắn chuyển cảnh "${trans.name}"${withPairedSfx && trans.recommendedSfxId ? ' + SFX đi kèm' : ''}` });
+  },
+
+  applyBuiltinLut: async (lut) => {
+    const p = get().project;
+    if (!p) return;
+    set({ busyTask: `Đang nạp 3D LUT ${lut.title}...` });
+    try {
+      const loaded = await engineApi.getBuiltinLut(lut.id);
+      get().registerLut({
+        id: lut.id,
+        title: lut.title,
+        size: loaded.size,
+        data: new Float32Array(loaded.data),
+      });
+
+      const next = clone(p);
+      next.luts = {
+        ...(next.luts ?? {}),
+        [lut.id]: { id: lut.id, title: lut.title, size: loaded.size, filePath: loaded.filePath },
+      };
+      const scope = getActiveScopeMutable(next, get().nestedScopeId);
+      const selId = get().selectedClipId;
+      const selClip = selId ? scope.clips[selId] : undefined;
+      const targets =
+        selClip && (selClip.kind === 'video' || selClip.kind === 'image')
+          ? [selClip]
+          : Object.values(scope.clips).filter((c) => c.kind === 'video' || c.kind === 'image');
+
+      targets.forEach((tc) => {
+        tc.colorGrade.lutId = lut.id;
+        tc.colorGrade.lutName = lut.title;
+        tc.colorGrade.lutIntensity = lut.defaultIntensity;
+      });
+
+      await get().commitProject(`Áp 3D LUT: ${lut.title}`, next);
+      set({ statusMessage: `Đã áp 3D LUT "${lut.title}" lên ${targets.length} clip` });
+    } catch (err) {
+      set({ errorMessage: `Lỗi tải LUT: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
+  },
+
+  addBuiltinAudioToTimeline: async (preset, atUs) => {
+    const p = get().project;
+    if (!p) return;
+    set({ busyTask: `Đang thêm ${preset.name} vào Timeline...` });
+    try {
+      const { asset } = await engineApi.addBuiltinAudio(preset.id);
+      const next = clone(p);
+      next.assets[asset.id] = asset;
+      const scope = getActiveScopeMutable(next, get().nestedScopeId);
+      const track = scope.tracks.find((t) => t.type === 'audio') ?? scope.tracks[0];
+      const startUs = atUs ?? playbackClock.getTimeUs();
+
+      const clip: Clip = {
+        id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        trackId: track.id,
+        assetId: asset.id,
+        kind: 'audio',
+        name: preset.name,
+        timelineStartUs: startUs,
+        durationUs: asset.durationUs,
+        sourceStartUs: 0,
+        sourceDurationUs: asset.durationUs,
+        locked: false,
+        disabled: false,
+        transform: createDefaultTransform(),
+        colorGrade: createDefaultColorGrade(),
+        chromaKey: createDefaultChromaKey(),
+        mask: createDefaultMask(),
+        speed: createDefaultSpeed(),
+        audio: {
+          ...createDefaultAudioState(),
+          volume: preset.kind === 'music' ? 0.72 : 0.95,
+          fadeOutUs: preset.kind === 'music' ? 600_000 : 0,
+        },
+        keyframes: {},
+        effects: [],
+        aiMattingEnabled: false,
+        autoReframeEnabled: false,
+      };
+      scope.clips[clip.id] = clip;
+
+      if (preset.kind === 'music' && preset.beatsUs.length > 0) {
+        const existingBeats = new Set(next.markers.map((m) => m.timeUs));
+        preset.beatsUs.slice(0, 32).forEach((bUs, bi) => {
+          const absUs = startUs + bUs;
+          if (!existingBeats.has(absUs)) {
+            next.markers.push({
+              id: `bmk_${Date.now()}_${bi}`,
+              timeUs: absUs,
+              label: `Beat ${bi + 1}`,
+              color: '#FFD60A',
+              kind: 'beat',
+            });
+          }
+        });
+      }
+
+      await get().commitProject(`Thêm ${preset.kind === 'music' ? 'Nhạc' : 'SFX'}: ${preset.name}`, next);
+      await get().loadWaveform(asset);
+      set({
+        selectedClipId: clip.id,
+        selectedClipIds: [clip.id],
+        statusMessage: `Đã thêm "${preset.name}"${preset.bpm ? ` (${preset.bpm} BPM + Beat Markers)` : ''}`,
+      });
+    } catch (err) {
+      set({ errorMessage: `Lỗi thêm Audio: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
+  },
+
+  toggleFavoritePreset: (id) => {
+    set((s) => {
+      const exists = s.favoritePresetIds.includes(id);
+      const next = exists ? s.favoritePresetIds.filter((x) => x !== id) : [...s.favoritePresetIds, id];
+      try {
+        localStorage.setItem('tcapcut_favs_v3', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return { favoritePresetIds: next };
+    });
+  },
+
+  setTemplateModalPreset: (tpl) => set({ templateModalPreset: tpl }),
+
+  applyTemplateProject: async (template, slotAssets) => {
+    const p = get().project;
+    if (!p) return;
+    set({ busyTask: `Đang dựng Smart Template "${template.name}"...` });
+    try {
+      const [loadedLut, musicRes] = await Promise.all([
+        engineApi.getBuiltinLut(template.lutId).catch(() => null),
+        engineApi.addBuiltinAudio(template.musicId).catch(() => null),
+      ]);
+      if (loadedLut) {
+        get().registerLut({
+          id: template.lutId,
+          title: loadedLut.title,
+          size: loadedLut.size,
+          data: new Float32Array(loadedLut.data),
+        });
+      }
+      const nextProj = applyVideoTemplateToProject(p, template, slotAssets, musicRes?.asset ?? null);
+      if (loadedLut) {
+        nextProj.luts = {
+          ...(nextProj.luts ?? {}),
+          [template.lutId]: { id: template.lutId, title: loadedLut.title, size: loadedLut.size, filePath: loadedLut.filePath },
+        };
+      }
+      await get().commitProject(`Áp dụng Template: ${template.name}`, nextProj);
+      if (musicRes?.asset) await get().loadWaveform(musicRes.asset);
+      playbackClock.setPlaying(false);
+      playbackClock.setTimeUs(0);
+      set({
+        playheadUs: 0,
+        templateModalPreset: null,
+        selectedClipId: null,
+        statusMessage: `Đã tạo video từ Template "${template.name}" (${template.slots.length} cảnh + Nhạc + LUT + Karaoke)!`,
+      });
+    } catch (err) {
+      set({ errorMessage: `Lỗi tạo Template: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
+  },
+
+  importLocalPresetPack: async (pack) => {
+    set({ busyTask: 'Đang nhập Local Pack...' });
+    try {
+      const res = await engineApi.importLocalPack(pack);
+      res.importedLuts.forEach((l) => {
+        get().registerLut({ id: l.id, title: l.title, size: l.size, data: new Float32Array(l.data) });
+      });
+      const p = get().project;
+      if (p) {
+        const next = clone(p);
+        res.importedAudio.forEach((a) => {
+          next.assets[a.id] = a;
+        });
+        res.importedLuts.forEach((l) => {
+          next.luts = { ...(next.luts ?? {}), [l.id]: { id: l.id, title: l.title, size: l.size, filePath: l.filePath } };
+        });
+        await get().commitProject(`Import Pack: ${res.packName}`, next);
+      }
+      set({ statusMessage: `Đã nhập Pack "${res.packName}" (${res.importedLuts.length} LUTs, ${res.importedAudio.length} Audio)` });
+    } catch (err) {
+      set({ errorMessage: `Lỗi nhập Pack: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
   },
 
   updateSelectedClip: async (label, updater) => {
@@ -1392,6 +1859,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!p || !plan) return;
     try {
       const res = await engineApi.applyChatCut(p.id, plan);
+      const neededLuts = new Set<string>();
+      Object.values(res.project.clips).forEach((c) => {
+        if (c.colorGrade.lutId && !get().loadedLuts[c.colorGrade.lutId]) {
+          neededLuts.add(c.colorGrade.lutId);
+        }
+      });
+      for (const lutId of neededLuts) {
+        void engineApi
+          .getLut(lutId)
+          .then((l) => get().registerLut({ id: l.id, title: l.title, size: l.size, data: new Float32Array(l.data) }))
+          .catch(() => {});
+      }
       const clipCount = Object.keys(res.project.clips).length;
       set((s) => ({
         project: res.project,

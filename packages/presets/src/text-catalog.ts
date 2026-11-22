@@ -1,0 +1,290 @@
+import { createDefaultTextStyle, type TextStyleState } from '@t-capcut/schema';
+
+export type TextPresetCategory = 'karaoke' | 'title' | 'lower_third' | 'social';
+
+export interface TextPreset {
+  id: string;
+  name: string;
+  category: TextPresetCategory;
+  categoryLabel: string;
+  desc: string;
+  sampleText: string;
+  defaultY: number;
+  style: Partial<TextStyleState>;
+}
+
+export const TEXT_CATEGORIES: Array<{ id: TextPresetCategory | 'all'; label: string }> = [
+  { id: 'all', label: 'Tất cả (25)' },
+  { id: 'karaoke', label: 'Karaoke Viral (8)' },
+  { id: 'title', label: 'Tiêu Đề (6)' },
+  { id: 'lower_third', label: 'Lower Third (6)' },
+  { id: 'social', label: 'Review & Badge (5)' },
+];
+
+export const TEXT_CATALOG: TextPreset[] = [
+  // 8 Viral Karaoke Styles
+  {
+    id: 'krk_hormozi',
+    name: 'Hormozi Bold Pop',
+    category: 'karaoke',
+    categoryLabel: 'Karaoke Viral',
+    desc: 'Chữ in đậm phóng to từ đang nói, vàng rực + viền đen dày',
+    sampleText: 'BÍ QUYẾT TRIỆU VIEW TIKTOK',
+    defaultY: 0.25,
+    style: { fontSize: 66, fontWeight: 900, color: '#FFFFFF', karaokeEnabled: true, karaokeActiveColor: '#FACC15', karaokePreset: 'hormozi-pop', strokeColor: '#000000', strokeWidth: 7, backgroundColor: 'rgba(0,0,0,0)', animationIn: 'pop' },
+  },
+  {
+    id: 'krk_classic_pill',
+    name: 'CapCut Classic Pill',
+    category: 'karaoke',
+    categoryLabel: 'Karaoke Viral',
+    desc: 'Hộp màu xanh ngọc trượt bám từng chữ đang đọc',
+    sampleText: 'Chào mừng tới Studio',
+    defaultY: 0.34,
+    style: { fontSize: 56, fontWeight: 800, color: '#FFFFFF', karaokeEnabled: true, karaokeActiveColor: '#06B6D4', karaokePreset: 'classic-pill', strokeWidth: 0, backgroundColor: 'rgba(10, 14, 24, 0.72)', animationIn: 'pop' },
+  },
+  {
+    id: 'krk_liquid_glass',
+    name: 'Tahoe Liquid Glass',
+    category: 'karaoke',
+    categoryLabel: 'Karaoke Viral',
+    desc: 'Nền kính mờ tinh tế chuẩn macOS Tahoe + chữ cyan',
+    sampleText: 'Dựng phim chuẩn điện ảnh',
+    defaultY: 0.34,
+    style: { fontSize: 54, fontWeight: 700, color: '#F8FAFC', karaokeEnabled: true, karaokeActiveColor: '#22D3EE', karaokePreset: 'liquid-glass', strokeWidth: 2, backgroundColor: 'rgba(15, 23, 42, 0.56)', backgroundRadius: 16, animationIn: 'fade' },
+  },
+  {
+    id: 'krk_sweep_fill',
+    name: 'Karaoke Sweep Fill',
+    category: 'karaoke',
+    categoryLabel: 'Karaoke Viral',
+    desc: 'Highlight chuyển mượt vàng nắng theo nhịp từng từ',
+    sampleText: 'Hát theo giai điệu này',
+    defaultY: 0.36,
+    style: { fontSize: 58, fontWeight: 800, color: '#CBD5E1', karaokeEnabled: true, karaokeActiveColor: '#FDE047', karaokePreset: 'sweep-fill', strokeColor: '#0F172A', strokeWidth: 4, animationIn: 'fade' },
+  },
+  {
+    id: 'krk_neon_cyber',
+    name: 'Neon Cyber Glow',
+    category: 'karaoke',
+    categoryLabel: 'Karaoke Viral',
+    desc: 'Phát sáng neon tím/hồng Cyberpunk cực nổi',
+    sampleText: 'CYBERPUNK NIGHT REELS',
+    defaultY: 0.3,
+    style: { fontSize: 60, fontWeight: 800, color: '#E0F2FE', karaokeEnabled: true, karaokeActiveColor: '#F472B6', karaokePreset: 'neon-cyber', shadowColor: 'rgba(244, 114, 182, 0.9)', shadowBlur: 18, strokeColor: '#831843', strokeWidth: 3, animationIn: 'glitch', animationLoop: 'neon-flicker' },
+  },
+  {
+    id: 'krk_minimal_podcast',
+    name: 'Minimal Podcast Clean',
+    category: 'karaoke',
+    categoryLabel: 'Karaoke Viral',
+    desc: 'Phụ đề sạch tối giản cho phỏng vấn & Podcast',
+    sampleText: 'Tập trung vào giá trị thật',
+    defaultY: 0.35,
+    style: { fontSize: 48, fontWeight: 600, color: '#94A3B8', karaokeEnabled: true, karaokeActiveColor: '#FFFFFF', karaokePreset: 'minimal-podcast', strokeWidth: 0, backgroundColor: 'rgba(2, 6, 23, 0.5)', animationIn: 'slide-up' },
+  },
+  {
+    id: 'krk_comic_punch',
+    name: 'Comic Vlog Punch',
+    category: 'karaoke',
+    categoryLabel: 'Karaoke Viral',
+    desc: 'Chữ nghiêng sôi động cho Gaming & Daily Vlog',
+    sampleText: 'KHÔNG THỂ TIN NỔI!!',
+    defaultY: 0.28,
+    style: { fontSize: 62, fontWeight: 900, italic: true, color: '#FFFFFF', karaokeEnabled: true, karaokeActiveColor: '#34D399', karaokePreset: 'comic-punch', strokeColor: '#000000', strokeWidth: 6, animationIn: 'zoom-slam' },
+  },
+  {
+    id: 'krk_doc_serif',
+    name: 'Documentary Warm',
+    category: 'karaoke',
+    categoryLabel: 'Karaoke Viral',
+    desc: 'Phong cách phim tài liệu & kể chuyện sâu lắng',
+    sampleText: 'Hành trình bắt đầu từ đây',
+    defaultY: 0.36,
+    style: { fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 50, fontWeight: 600, italic: true, color: '#E2E8F0', karaokeEnabled: true, karaokeActiveColor: '#FBBF24', karaokePreset: 'doc-serif', strokeWidth: 2, letterSpacing: 1.5, animationIn: 'fade' },
+  },
+
+  // 6 Intro Titles
+  {
+    id: 'ttl_cinematic_letter',
+    name: 'Cinematic Tracking Title',
+    category: 'title',
+    categoryLabel: 'Tiêu Đề',
+    desc: 'Tiêu đề chữ giãn rộng sang trọng mở đầu phim',
+    sampleText: 'THE GOLDEN HOUR',
+    defaultY: 0,
+    style: { fontSize: 72, fontWeight: 300, letterSpacing: 6, color: '#FFFFFF', karaokeEnabled: false, strokeWidth: 0, animationIn: 'blur-in' },
+  },
+  {
+    id: 'ttl_vlog_stamp',
+    name: 'Daily Vlog Date Stamp',
+    category: 'title',
+    categoryLabel: 'Tiêu Đề',
+    desc: 'Ngày tháng phong cách máy quay cá nhân Aesthetic',
+    sampleText: 'NOV 22 · SAIGON MORNING',
+    defaultY: -0.34,
+    style: { fontFamily: '"SF Mono", ui-monospace, monospace', fontSize: 38, fontWeight: 700, color: '#FDE68A', karaokeEnabled: false, backgroundColor: 'rgba(15, 23, 42, 0.55)', animationIn: 'typewriter' },
+  },
+  {
+    id: 'ttl_glitch_intro',
+    name: 'Cyber Glitch Headline',
+    category: 'title',
+    categoryLabel: 'Tiêu Đề',
+    desc: 'Tiêu đề công nghệ giật lag kèm ánh cyan',
+    sampleText: 'NEXT GEN REVIEW',
+    defaultY: 0,
+    style: { fontSize: 70, fontWeight: 900, color: '#22D3EE', karaokeEnabled: false, shadowColor: 'rgba(236, 72, 153, 0.85)', shadowBlur: 14, strokeColor: '#083344', strokeWidth: 4, animationIn: 'glitch' },
+  },
+  {
+    id: 'ttl_chapter_01',
+    name: 'Chapter Divider 01',
+    category: 'title',
+    categoryLabel: 'Tiêu Đề',
+    desc: 'Chia chương bài review / hướng dẫn YouTube',
+    sampleText: '01 / MỞ HỘP & THIẾT KẾ',
+    defaultY: 0,
+    style: { fontSize: 56, fontWeight: 800, color: '#F8FAFC', karaokeEnabled: false, backgroundColor: 'rgba(34, 211, 238, 0.22)', backgroundRadius: 12, strokeWidth: 0, animationIn: 'slide-left' },
+  },
+  {
+    id: 'ttl_minimal_quote',
+    name: 'Minimalist Quote Box',
+    category: 'title',
+    categoryLabel: 'Tiêu Đề',
+    desc: 'Trích dẫn câu nói truyền cảm hứng giữa khung',
+    sampleText: '“Sáng tạo không có giới hạn.”',
+    defaultY: 0.05,
+    style: { fontFamily: 'Georgia, serif', fontSize: 50, italic: true, color: '#F1F5F9', karaokeEnabled: false, backgroundColor: 'rgba(0, 0, 0, 0.52)', animationIn: 'fade' },
+  },
+  {
+    id: 'ttl_hook_hook',
+    name: '3-Second Hook Headline',
+    category: 'title',
+    categoryLabel: 'Tiêu Đề',
+    desc: 'Tiêu đề lớn giữ chân 3 giây đầu Shorts/Reels',
+    sampleText: 'ĐỪNG MUA TRƯỚC KHI XEM!',
+    defaultY: -0.26,
+    style: { fontSize: 64, fontWeight: 900, color: '#FFFFFF', backgroundColor: 'rgba(225, 29, 72, 0.92)', strokeColor: '#000000', strokeWidth: 3, karaokeEnabled: false, animationIn: 'zoom-slam' },
+  },
+
+  // 6 Lower Thirds
+  {
+    id: 'lt_glass_speaker',
+    name: 'Glass Speaker Tag',
+    category: 'lower_third',
+    categoryLabel: 'Lower Third',
+    desc: 'Thẻ giới thiệu tên khách mời kính mờ Liquid Glass',
+    sampleText: 'Minh Trí · Film Director',
+    defaultY: 0.34,
+    style: { fontSize: 44, fontWeight: 700, color: '#FFFFFF', badgeText: 'GUEST', backgroundColor: 'rgba(15, 23, 42, 0.78)', strokeWidth: 0, karaokeEnabled: false, animationIn: 'slide-right', animationLoop: 'float' },
+  },
+  {
+    id: 'lt_channel_handle',
+    name: 'Social Handle Pill',
+    category: 'lower_third',
+    categoryLabel: 'Lower Third',
+    desc: 'Thẻ @username TikTok / YouTube / Instagram',
+    sampleText: '@tcapcut.studio',
+    defaultY: 0.36,
+    style: { fontSize: 40, fontWeight: 700, color: '#67E8F9', badgeText: 'FOLLOW', backgroundColor: 'rgba(8, 47, 73, 0.85)', strokeWidth: 0, karaokeEnabled: false, animationIn: 'slide-up' },
+  },
+  {
+    id: 'lt_location_pin',
+    name: 'Travel Location Pin',
+    category: 'lower_third',
+    categoryLabel: 'Lower Third',
+    desc: 'Gắn địa điểm du lịch kèm icon pin',
+    sampleText: 'ĐÀ LẠT · VIỆT NAM',
+    defaultY: 0.34,
+    style: { fontSize: 42, fontWeight: 700, color: '#FEF08A', badgeText: '📍', backgroundColor: 'rgba(17, 24, 39, 0.75)', letterSpacing: 1.5, strokeWidth: 0, karaokeEnabled: false, animationIn: 'slide-left' },
+  },
+  {
+    id: 'lt_camera_exif',
+    name: 'Gear / Camera EXIF Bar',
+    category: 'lower_third',
+    categoryLabel: 'Lower Third',
+    desc: 'Hiển thị thông số máy quay / ống kính / LUT',
+    sampleText: '4K 60FPS · APPLE LOG · 35MM',
+    defaultY: 0.38,
+    style: { fontFamily: '"SF Mono", ui-monospace, monospace', fontSize: 34, fontWeight: 600, color: '#CBD5E1', backgroundColor: 'rgba(2, 6, 23, 0.72)', strokeWidth: 0, karaokeEnabled: false, animationIn: 'fade' },
+  },
+  {
+    id: 'lt_breaking_news',
+    name: 'News Ticker Banner',
+    category: 'lower_third',
+    categoryLabel: 'Lower Third',
+    desc: 'Thanh tin nóng đỏ trắng phong cách bản tin',
+    sampleText: 'TIN NÓNG: CẬP NHẬT PHIÊN BẢN MỚI',
+    defaultY: 0.36,
+    style: { fontSize: 42, fontWeight: 800, color: '#FFFFFF', badgeText: 'LIVE', backgroundColor: 'rgba(185, 28, 28, 0.9)', strokeWidth: 0, karaokeEnabled: false, animationIn: 'slide-right' },
+  },
+  {
+    id: 'lt_music_credit',
+    name: 'Now Playing Track Tag',
+    category: 'lower_third',
+    categoryLabel: 'Lower Third',
+    desc: 'Hiển thị tên bài nhạc đang phát ở góc',
+    sampleText: '♪ Midnight Lo-Fi — Studio',
+    defaultY: -0.36,
+    style: { fontSize: 36, fontWeight: 600, color: '#A7F3D0', backgroundColor: 'rgba(6, 78, 59, 0.72)', strokeWidth: 0, karaokeEnabled: false, animationIn: 'fade' },
+  },
+
+  // 5 Review & Social Cards
+  {
+    id: 'soc_rating_5star',
+    name: '5-Star Review Rating',
+    category: 'social',
+    categoryLabel: 'Review & Badge',
+    desc: 'Thẻ đánh giá 5 sao vàng nổi bật cho Review sản phẩm',
+    sampleText: '★★★★★ 4.9 / 5 ĐÁNG MUA',
+    defaultY: 0.24,
+    style: { fontSize: 48, fontWeight: 800, color: '#FACC15', backgroundColor: 'rgba(15, 23, 42, 0.82)', strokeWidth: 0, karaokeEnabled: false, animationIn: 'pop' },
+  },
+  {
+    id: 'soc_price_sale',
+    name: 'Flash Sale -50% Badge',
+    category: 'social',
+    categoryLabel: 'Review & Badge',
+    desc: 'Nhãn giá khuyến mãi thu hút click giỏ hàng',
+    sampleText: 'GIẢM 50% · CHỈ HÔM NAY',
+    defaultY: 0.24,
+    style: { fontSize: 50, fontWeight: 900, color: '#FFFFFF', backgroundColor: 'rgba(234, 88, 12, 0.94)', strokeColor: '#000000', strokeWidth: 2, karaokeEnabled: false, animationIn: 'zoom-slam', animationLoop: 'pulse' },
+  },
+  {
+    id: 'soc_pros_tag',
+    name: 'Pros / Điểm Cộng Card',
+    category: 'social',
+    categoryLabel: 'Review & Badge',
+    desc: 'Huy hiệu xanh liệt kê ưu điểm sản phẩm',
+    sampleText: '✓ PIN TRÂU · MÀN HÌNH 120HZ',
+    defaultY: 0.28,
+    style: { fontSize: 44, fontWeight: 700, color: '#ECFDF5', backgroundColor: 'rgba(5, 150, 105, 0.88)', strokeWidth: 0, karaokeEnabled: false, animationIn: 'slide-up' },
+  },
+  {
+    id: 'soc_before_label',
+    name: 'BEFORE / AFTER Pill',
+    category: 'social',
+    categoryLabel: 'Review & Badge',
+    desc: 'Nhãn so sánh trước và sau chỉnh sửa / biến hình',
+    sampleText: 'TRƯỚC  →  SAU',
+    defaultY: -0.32,
+    style: { fontSize: 46, fontWeight: 800, color: '#F8FAFC', backgroundColor: 'rgba(79, 70, 229, 0.85)', letterSpacing: 2, strokeWidth: 0, karaokeEnabled: false, animationIn: 'pop' },
+  },
+  {
+    id: 'soc_cta_link',
+    name: 'Link In Bio Callout',
+    category: 'social',
+    categoryLabel: 'Review & Badge',
+    desc: 'Lời kêu gọi hành động cuối video Shorts/Reels',
+    sampleText: 'XEM CHI TIẾT TRONG BIO ↓',
+    defaultY: 0.34,
+    style: { fontSize: 48, fontWeight: 800, color: '#03121A', backgroundColor: 'rgba(34, 211, 238, 0.95)', strokeWidth: 0, karaokeEnabled: false, animationIn: 'pop', animationLoop: 'pulse' },
+  },
+];
+
+export function buildTextStyleFromPreset(preset: TextPreset, textOverride?: string): TextStyleState {
+  return {
+    ...createDefaultTextStyle(textOverride ?? preset.sampleText),
+    ...preset.style,
+    text: textOverride ?? preset.sampleText,
+  };
+}

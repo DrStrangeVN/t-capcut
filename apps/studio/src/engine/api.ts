@@ -41,6 +41,12 @@ export function mediaStreamUrl(filePath: string): string {
   return `${API_BASE}/api/media/stream?path=${encodeURIComponent(filePath)}${tokParam}`;
 }
 
+export function presetAudioStreamUrl(filename: string): string {
+  const token = getSessionToken();
+  const tokParam = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${API_BASE}/api/presets/audio/${encodeURIComponent(filename)}${tokParam}`;
+}
+
 async function reqJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, {
     ...init,
@@ -160,6 +166,29 @@ export const engineApi = {
     reqJson<{ id: string; title: string; size: number; filePath: string; data: number[] }>(
       `/api/luts/${encodeURIComponent(lutId)}`
     ),
+  getBuiltinLut: (lutId: string) =>
+    reqJson<{ id: string; title: string; size: number; filePath: string; data: number[] }>(
+      `/api/presets/luts/${encodeURIComponent(lutId)}`
+    ),
+  addBuiltinAudio: (presetId: string) =>
+    reqJson<{ asset: MediaAsset }>('/api/presets/audio/add', {
+      method: 'POST',
+      body: JSON.stringify({ presetId }),
+    }),
+  importLocalPack: (pack: {
+    packName?: string;
+    luts?: Array<{ id?: string; filename?: string; content: string }>;
+    audioFiles?: Array<{ filename: string; base64: string }>;
+  }) =>
+    reqJson<{
+      ok: boolean;
+      packName: string;
+      importedLuts: Array<{ id: string; title: string; size: number; filePath: string; data: number[] }>;
+      importedAudio: MediaAsset[];
+    }>('/api/presets/import-pack', {
+      method: 'POST',
+      body: JSON.stringify(pack),
+    }),
   revealInFinder: (filePath: string) =>
     reqJson<{ ok: boolean }>('/api/system/reveal', {
       method: 'POST',

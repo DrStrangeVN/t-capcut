@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Diamond, FlipHorizontal, FlipVertical, Gauge, Palette, Pipette, Scissors, Sliders, Volume2 } from 'lucide-react';
+import { Diamond, FlipHorizontal, FlipVertical, Gauge, Palette, Pipette, Scissors, Sliders, Sparkles, Trash2, Volume2 } from 'lucide-react';
 import {
   EASING_PRESETS,
   computeDurationFromSpeed,
@@ -8,6 +8,7 @@ import {
   type BlendMode,
   type MaskShape,
   type SpeedState,
+  type TextStyleState,
 } from '@t-capcut/schema';
 import { useEditorStore, type InspectorTab } from '../store/useEditorStore';
 
@@ -180,6 +181,242 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
                     />
                   </div>
                 </div>
+
+                {/* Karaoke Preset + In/Out/Loop Animations + Badge Tag */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Kiểu Karaoke</label>
+                    <select
+                      className="glass-select"
+                      style={{ fontSize: 10.5 }}
+                      value={clip.text.karaokePreset || 'classic-pill'}
+                      onChange={(e) => {
+                        const kp = e.target.value as TextStyleState['karaokePreset'];
+                        void updateSelectedClip('Kiểu Karaoke', (c) => {
+                          if (c.text) c.text.karaokePreset = kp;
+                        });
+                      }}
+                    >
+                      <option value="classic-pill">Classic Pill</option>
+                      <option value="hormozi-pop">Hormozi Pop</option>
+                      <option value="liquid-glass">Liquid Glass</option>
+                      <option value="sweep-fill">Sweep Fill</option>
+                      <option value="neon-cyber">Neon Cyber</option>
+                      <option value="minimal-podcast">Podcast Clean</option>
+                      <option value="comic-punch">Comic Punch</option>
+                      <option value="doc-serif">Documentary Serif</option>
+                      <option value="capcut-yellow">CapCut Yellow</option>
+                      <option value="neon-cyan">Neon Cyan</option>
+                      <option value="pop-bounce">Pop Bounce</option>
+                      <option value="word-highlight">Word Highlight</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Hiệu ứng Vào (In)</label>
+                    <select
+                      className="glass-select"
+                      style={{ fontSize: 10.5 }}
+                      value={clip.text.animationIn || 'pop'}
+                      onChange={(e) => {
+                        const val = e.target.value as TextStyleState['animationIn'];
+                        void updateSelectedClip('Text Animation In', (c) => {
+                          if (c.text) c.text.animationIn = val;
+                        });
+                      }}
+                    >
+                      <option value="none">Không</option>
+                      <option value="pop">Pop Bật</option>
+                      <option value="fade">Fade Mờ</option>
+                      <option value="slide-up">Trượt Lên</option>
+                      <option value="slide-down">Trượt Xuống</option>
+                      <option value="slide-left">Trượt Trái</option>
+                      <option value="slide-right">Trượt Phải</option>
+                      <option value="typewriter">Typewriter Gõ Chữ</option>
+                      <option value="blur-in">Blur Mờ Dần Rõ</option>
+                      <option value="zoom-slam">Zoom Slam</option>
+                      <option value="glitch">Glitch Nháy</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Hiệu ứng Ra (Out)</label>
+                    <select
+                      className="glass-select"
+                      style={{ fontSize: 10.5 }}
+                      value={clip.text.animationOut || 'fade'}
+                      onChange={(e) => {
+                        const val = e.target.value as TextStyleState['animationOut'];
+                        void updateSelectedClip('Text Animation Out', (c) => {
+                          if (c.text) c.text.animationOut = val;
+                        });
+                      }}
+                    >
+                      <option value="none">Không</option>
+                      <option value="fade">Fade Mờ</option>
+                      <option value="pop">Thu Nhỏ</option>
+                      <option value="slide-down">Trượt Xuống</option>
+                      <option value="zoom-out">Zoom Out</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Lặp Liên Tục (Loop)</label>
+                    <select
+                      className="glass-select"
+                      style={{ fontSize: 10.5 }}
+                      value={clip.text.animationLoop || 'none'}
+                      onChange={(e) => {
+                        const val = e.target.value as TextStyleState['animationLoop'];
+                        void updateSelectedClip('Text Animation Loop', (c) => {
+                          if (c.text) c.text.animationLoop = val;
+                        });
+                      }}
+                    >
+                      <option value="none">Không</option>
+                      <option value="pulse">Nhịp Tim Pulse</option>
+                      <option value="float">Lơ Lửng Float</option>
+                      <option value="wave">Lượn Sóng Wave</option>
+                      <option value="shake">Rung Nhẹ Shake</option>
+                      <option value="neon-flicker">Chớp Neon</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Nhãn Badge (Lower-Third)</label>
+                  <input
+                    className="glass-input"
+                    style={{ fontSize: 11 }}
+                    placeholder="VD: GUEST, LIVE, PRO..."
+                    value={clip.text.badgeText ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      previewSelectedClip((c) => {
+                        if (c.text) c.text.badgeText = val;
+                      });
+                    }}
+                    onBlur={() => void commitCurrentProject('Sửa Badge Tag')}
+                  />
+                </div>
+              </div>
+            )}
+
+            {clip.kind === 'sticker' && clip.sticker && (
+              <div style={{ padding: 10, borderRadius: 12, background: 'rgba(244,114,182,0.08)', border: '1px solid rgba(244,114,182,0.28)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#f472b6' }}>
+                  Sticker / Hạt Bay: {clip.sticker.name}
+                </label>
+                {!clip.sticker.particleType && (
+                  <input
+                    className="glass-input"
+                    value={clip.sticker.label ?? ''}
+                    placeholder="Nhãn Sticker..."
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      previewSelectedClip((c) => {
+                        if (c.sticker) c.sticker.label = val;
+                      });
+                    }}
+                    onBlur={() => void commitCurrentProject('Sửa nhãn Sticker')}
+                  />
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11 }}>
+                  <span>Màu chính / Màu phụ</span>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      type="color"
+                      value={clip.sticker.primaryColor}
+                      onChange={(e) => {
+                        const hex = e.target.value;
+                        void updateSelectedClip('Màu chính Sticker', (c) => {
+                          if (c.sticker) c.sticker.primaryColor = hex;
+                        });
+                      }}
+                    />
+                    <input
+                      type="color"
+                      value={clip.sticker.secondaryColor}
+                      onChange={(e) => {
+                        const hex = e.target.value;
+                        void updateSelectedClip('Màu phụ Sticker', (c) => {
+                          if (c.sticker) c.sticker.secondaryColor = hex;
+                        });
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {clip.effects && clip.effects.length > 0 && (
+              <div style={{ padding: 10, borderRadius: 12, background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.28)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, fontWeight: 700, color: '#c084fc' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Sparkles size={12} /> Multi-FX GPU Stack ({clip.effects.length})
+                  </span>
+                </div>
+                {clip.effects.map((fx, fxIdx) => (
+                  <div key={fx.id} style={{ padding: 7, borderRadius: 8, background: 'rgba(0,0,0,0.28)', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600 }}>
+                        <input
+                          type="checkbox"
+                          checked={fx.enabled !== false}
+                          onChange={(e) => {
+                            const chk = e.target.checked;
+                            void updateSelectedClip(`Toggle VFX ${fx.name}`, (c) => {
+                              if (c.effects[fxIdx]) c.effects[fxIdx].enabled = chk;
+                            });
+                          }}
+                        />
+                        <span>{fx.name}</span>
+                      </label>
+                      <button
+                        className="glass-btn"
+                        style={{ padding: '2px 5px' }}
+                        onClick={() =>
+                          void updateSelectedClip(`Xóa VFX ${fx.name}`, (c) => {
+                            c.effects.splice(fxIdx, 1);
+                          })
+                        }
+                        title="Xóa FX khỏi stack"
+                      >
+                        <Trash2 size={11} color="#fb7185" />
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-secondary)' }}>
+                      <span>Cường độ: {(fx.intensity * 100).toFixed(0)}%</span>
+                      <span>Tốc độ: {(fx.speed || 1).toFixed(1)}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      className="glass-slider"
+                      min={0}
+                      max={1.5}
+                      step={0.02}
+                      value={fx.intensity}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        previewSelectedClip((c) => {
+                          if (c.effects[fxIdx]) c.effects[fxIdx].intensity = v;
+                        });
+                      }}
+                      onPointerUp={() => void commitCurrentProject(`Chỉnh Intensity ${fx.name}`)}
+                    />
+                    <input
+                      type="range"
+                      className="glass-slider"
+                      min={0.2}
+                      max={3}
+                      step={0.1}
+                      value={fx.speed || 1}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        previewSelectedClip((c) => {
+                          if (c.effects[fxIdx]) c.effects[fxIdx].speed = v;
+                        });
+                      }}
+                      onPointerUp={() => void commitCurrentProject(`Chỉnh Speed ${fx.name}`)}
+                    />
+                  </div>
+                ))}
               </div>
             )}
 

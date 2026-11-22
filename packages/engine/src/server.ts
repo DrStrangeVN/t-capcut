@@ -17,6 +17,7 @@ import {
   type MediaAsset,
   type Project,
 } from '@t-capcut/schema';
+import { AUDIO_BY_ID, LUT_BY_ID } from '@t-capcut/presets';
 import {
   detectBeats,
   detectScenes,
@@ -52,6 +53,7 @@ export interface EnginePaths {
   projectRoot: string;
   dataDir: string;
   studioDistDir?: string;
+  presetsAssetsDir?: string;
 }
 
 interface ActiveExportJob {
@@ -78,7 +80,9 @@ const MIME_MAP: Record<string, string> = {
   '.mov': 'video/quicktime',
   '.webm': 'video/webm',
   '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
   '.wav': 'audio/wav',
+  '.cube': 'text/plain; charset=utf-8',
 };
 
 const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
@@ -172,6 +176,7 @@ export class TCapCutEngineServer {
   readonly modelsDir: string;
   readonly lutsDir: string;
   readonly tempDir: string;
+  readonly presetsAssetsDir: string;
   readonly sessionToken: string;
   private registeredAssets = new Map<string, MediaAsset>();
   private exportJobs = new Map<string, ActiveExportJob>();
@@ -187,6 +192,13 @@ export class TCapCutEngineServer {
     this.modelsDir = path.join(paths.dataDir, 'models');
     this.lutsDir = path.join(paths.dataDir, 'luts');
     this.tempDir = path.join(paths.dataDir, 'tmp');
+    const assetCandidates = [
+      paths.presetsAssetsDir,
+      process.env.TCAPCUT_PRESETS_ASSETS,
+      path.join(paths.projectRoot, 'packages', 'presets', 'assets'),
+      path.join(paths.projectRoot, 'presets-assets'),
+    ].filter((x): x is string => Boolean(x));
+    this.presetsAssetsDir = assetCandidates.find((d) => fs.existsSync(d)) ?? assetCandidates[0]!;
     [this.cacheDir, this.mediaDir, this.exportsDir, this.modelsDir, this.lutsDir, this.tempDir].forEach((d) =>
       fs.mkdirSync(d, { recursive: true })
     );
@@ -225,6 +237,15 @@ export class TCapCutEngineServer {
     try {
       const realDataDir = fs.realpathSync(this.paths.dataDir);
       if (realTarget === realDataDir || realTarget.startsWith(realDataDir + path.sep)) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const realPresetsDir = fs.realpathSync(this.presetsAssetsDir);
+      if (realTarget === realPresetsDir || realTarget.startsWith(realPresetsDir + path.sep)) {
         return true;
       }
     } catch {
@@ -324,7 +345,7 @@ export class TCapCutEngineServer {
       const authed = this.isAuthorized(req, reqUrl);
       sendJson(req, res, 200, {
         ok: true,
-        version: '2.0.0',
+        version: '3.0.0',
         dataDir: authed ? this.paths.dataDir : '[redacted]',
         ai: {
           visionAvailable: caps.visionAvailable,
@@ -509,15 +530,118 @@ export class TCapCutEngineServer {
     const lutGetMatch = pathname.match(/^\/api\/luts\/([^/]+)$/);
     if (lutGetMatch && req.method === 'GET') {
       const lutId = path.basename(decodeURIComponent(lutGetMatch[1])).replace(/[^a-zA-Z0-9._-]/g, '');
-      const cubePath = path.join(this.lutsDir, `${lutId}.cube`);
-      if (!fs.existsSync(cubePath)) return sendJson(req, res, 404, { error: 'LUT not found' });
+      const cleanId = lutId.replace(/\.cube$/i, '');
+      const userCube = path.join(this.lutsDir, `${cleanId}.cube`);
+      const builtinCube = path.join(this.presetsAssetsDir, 'luts', `${cleanId}.cube`);
+      const cubePath = fs.existsSync(userCube) ? userCube : fs.existsSync(builtinCube) ? builtinCube : null;
+      if (!cubePath) return sendJson(req, res, 404, { error: 'LUT not found' });
       const parsed = parseCubeLUT(fs.readFileSync(cubePath, 'utf8'));
       return sendJson(req, res, 200, {
-        id: lutId,
+        id: cleanId,
         title: parsed.title,
         size: parsed.size,
         filePath: cubePath,
         data: Array.from(parsed.data),
+      });
+    }
+
+    // Embedded Offline Presets API (LUTs, Audio/SFX Stream + MediaAsset Registration, Pack Importer)
+    const presetLutMatch = pathname.match(/^\/api\/presets\/luts\/([^/]+)$/);
+    if (presetLutMatch && req.method === 'GET') {
+      const rawId = path.basename(decodeURIComponent(presetLutMatch[1])).replace(/[^a-zA-Z0-9._-]/g, '');
+      const cleanId = rawId.replace(/\.cube$/i, '');
+      const preset = LUT_BY_ID[cleanId];
+      const cubePath = path.join(this.presetsAssetsDir, 'luts', preset ? preset.filename : `${cleanId}.cube`);
+      if (!fs.existsSync(cubePath)) return sendJson(req, res, 404, { error: 'Built-in LUT not found' });
+      const parsed = parseCubeLUT(fs.readFileSync(cubePath, 'utf8'));
+      return sendJson(req, res, 200, {
+        id: cleanId,
+        title: preset?.title || parsed.title,
+        size: parsed.size,
+        filePath: cubePath,
+        data: Array.from(parsed.data),
+      });
+    }
+
+    const presetAudioMatch = pathname.match(/^\/api\/presets\/audio\/([^/]+)$/);
+    if (presetAudioMatch && req.method === 'GET') {
+      const rawName = path.basename(decodeURIComponent(presetAudioMatch[1])).replace(/[^a-zA-Z0-9._-]/g, '');
+      const cleanId = rawName.replace(/\.m4a$/i, '');
+      const preset = AUDIO_BY_ID[cleanId];
+      const audioPath = path.join(this.presetsAssetsDir, 'audio', preset ? preset.filename : `${cleanId}.m4a`);
+      if (!fs.existsSync(audioPath)) return sendJson(req, res, 404, { error: 'Built-in audio not found' });
+      serveMediaWithRange(req, res, audioPath);
+      return;
+    }
+
+    if (pathname === '/api/presets/audio/add' && req.method === 'POST') {
+      const body = await readJsonBody<{ presetId: string }>(req);
+      const preset = AUDIO_BY_ID[body.presetId];
+      if (!preset) return sendJson(req, res, 404, { error: 'Unknown audio presetId' });
+      const audioPath = path.join(this.presetsAssetsDir, 'audio', preset.filename);
+      if (!fs.existsSync(audioPath)) {
+        return sendJson(req, res, 404, { error: `Built-in audio missing on disk: ${preset.filename}` });
+      }
+      const stat = fs.statSync(audioPath);
+      const assetId = `preset_${preset.id}`;
+      const asset: MediaAsset = {
+        id: assetId,
+        name: preset.name,
+        kind: 'audio',
+        sourcePath: audioPath,
+        durationUs: Math.round(preset.durationSec * US_PER_SEC),
+        width: 0,
+        height: 0,
+        fps: 30,
+        hasAudio: true,
+        codecAudio: 'aac',
+        fileSizeBytes: stat.size,
+        createdAt: Date.now(),
+        proxyStatus: 'ready',
+        beatsUs: preset.beatsUs.length > 0 ? [...preset.beatsUs] : undefined,
+      };
+      asset.waveformPath = await extractWaveformPeaks(asset, this.cacheDir).catch(() => null);
+      this.registeredAssets.set(asset.id, asset);
+      return sendJson(req, res, 200, { asset, preset });
+    }
+
+    if (pathname === '/api/presets/import-pack' && req.method === 'POST') {
+      const body = await readJsonBody<{
+        packName?: string;
+        luts?: Array<{ id?: string; filename?: string; content: string }>;
+        audioFiles?: Array<{ filename: string; base64: string }>;
+      }>(req);
+      const importedLuts: Array<{ id: string; title: string; size: number; filePath: string; data: number[] }> = [];
+      for (const lut of body.luts ?? []) {
+        const cleanId = (lut.id || lut.filename || `pack_lut_${Date.now()}`)
+          .replace(/\.cube$/i, '')
+          .replace(/[^a-zA-Z0-9._-]/g, '_');
+        const parsed = parseCubeLUT(lut.content);
+        const cubePath = path.join(this.lutsDir, `${cleanId}.cube`);
+        fs.writeFileSync(cubePath, lut.content, 'utf8');
+        importedLuts.push({
+          id: cleanId,
+          title: parsed.title || cleanId,
+          size: parsed.size,
+          filePath: cubePath,
+          data: Array.from(parsed.data),
+        });
+      }
+      const importedAudio: MediaAsset[] = [];
+      for (const af of body.audioFiles ?? []) {
+        const safeName = path.basename(af.filename).replace(/[^a-zA-Z0-9._-]/g, '_');
+        const outAudio = path.join(this.mediaDir, `pack_${Date.now()}_${safeName}`);
+        fs.writeFileSync(outAudio, Buffer.from(af.base64, 'base64'));
+        const probed = await probeMedia(outAudio, `pack_aud_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`);
+        probed.waveformPath = await extractWaveformPeaks(probed, this.cacheDir).catch(() => null);
+        this.registeredAssets.set(probed.id, probed);
+        importedAudio.push(probed);
+      }
+      return sendJson(req, res, 200, {
+        ok: true,
+        packName: body.packName || 'Local Pack',
+        importedLuts,
+        importedAudio,
       });
     }
 
@@ -672,6 +796,7 @@ export class TCapCutEngineServer {
         rangeStartUs: body.options.rangeStartUs ?? null,
         rangeEndUs: body.options.rangeEndUs ?? null,
         lutsDir: this.lutsDir,
+        presetsAssetsDir: this.presetsAssetsDir,
         modelsDir: this.modelsDir,
         outputPath: outPath,
         abortSignal: abortController.signal,
@@ -811,6 +936,7 @@ export class TCapCutEngineServer {
           rangeStartUs: body.options.rangeStartUs ?? null,
           rangeEndUs: body.options.rangeEndUs ?? null,
           lutsDir: this.lutsDir,
+          presetsAssetsDir: this.presetsAssetsDir,
           modelsDir: this.modelsDir,
           outputPath: outPath,
         },
@@ -841,6 +967,7 @@ export class TCapCutEngineServer {
             burnSubtitles: job.options.burnSubtitles ?? true,
             loudnorm: job.options.loudnorm ?? true,
             lutsDir: this.lutsDir,
+            presetsAssetsDir: this.presetsAssetsDir,
             modelsDir: this.modelsDir,
             outputPath: outPath,
           },

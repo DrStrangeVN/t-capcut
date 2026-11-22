@@ -15,6 +15,7 @@ import {
   type Project,
 } from '@t-capcut/schema';
 import { detectBeats, detectScenes, detectSilence, transcribeMedia } from './ai.js';
+import { LUTS_CATALOG, VFX_CATALOG } from '@t-capcut/presets';
 
 export interface ChatCutLlmConfig {
   provider: 'ollama' | 'openai' | 'gemini';
@@ -272,8 +273,27 @@ export async function buildChatCutPlan(
     }
   }
 
-  // 6. Color Grading (targets selected clip or all target clips)
-  if (/màu|color|cinematic|ấm|warm|lạnh|vintage|noir|nét/.test(q) && targetClips.length > 0) {
+  // 6. Color Grading + Built-in 3D LUT matching
+  const matchedLut = LUTS_CATALOG.find(
+    (l) =>
+      q.includes(l.id.toLowerCase()) ||
+      q.includes(l.title.toLowerCase()) ||
+      q.includes(l.id.replace('lut_', '').replace(/_/g, ' '))
+  );
+  if (matchedLut && targetClips.length > 0) {
+    for (const tc of targetClips) {
+      ops.push({
+        op: 'apply_color',
+        description: `Áp dụng 3D LUT "${matchedLut.title}" cho ${tc.name}`,
+        targetClipId: tc.id,
+        payload: {
+          lutId: matchedLut.id,
+          lutName: matchedLut.title,
+          lutIntensity: matchedLut.defaultIntensity,
+        },
+      });
+    }
+  } else if (/màu|color|cinematic|ấm|warm|lạnh|vintage|noir|nét/.test(q) && targetClips.length > 0) {
     const isWarm = /ấm|warm|cinematic/.test(q);
     const isNoir = /noir|đen trắng|trắng đen/.test(q);
     for (const tc of targetClips) {
@@ -340,21 +360,44 @@ export async function buildChatCutPlan(
     }
   }
 
-  // 10. Shader VFX
-  if (/glitch|vhs|dreamy|film|hiệu ứng|effect/.test(q)) {
-    const shaderId = /glitch/.test(q)
-      ? 'glitch'
-      : /vhs/.test(q)
-        ? 'vhs'
-        : /film/.test(q)
-          ? 'film_burn'
-          : 'dreamy';
+  // 10. Shader VFX (matches all 36 VFX shaders by ID or name)
+  const matchedVfx = VFX_CATALOG.find(
+    (v) =>
+      q.includes(v.id.replace(/_/g, ' ')) ||
+      q.includes(v.id) ||
+      q.includes(v.name.toLowerCase())
+  );
+  if (matchedVfx || /glitch|vhs|dreamy|film|hiệu ứng|effect|blur|neon|shake|retro/.test(q)) {
+    const vfx =
+      matchedVfx ??
+      VFX_CATALOG.find((v) =>
+        /glitch/.test(q)
+          ? v.id === 'glitch'
+          : /vhs/.test(q)
+            ? v.id === 'vhs'
+            : /film/.test(q)
+              ? v.id === 'film_burn'
+              : /neon/.test(q)
+                ? v.id === 'neon_edge'
+                : /blur|mờ/.test(q)
+                  ? v.id === 'gaussian_blur'
+                  : /shake|rung/.test(q)
+                    ? v.id === 'camera_shake'
+                    : v.id === 'dreamy'
+      ) ??
+      VFX_CATALOG[0]!;
     ops.push({
       op: 'add_effect',
-      description: `Thêm lớp GPU Shader VFX (${shaderId}) lên Track Effect`,
+      description: `Thêm lớp GPU Shader VFX (${vfx.name}) lên Track Effect`,
       timeUs: primaryClip?.timelineStartUs ?? 0,
       durationUs: Math.min(3 * US_PER_SEC, primaryClip?.durationUs ?? 3 * US_PER_SEC),
-      payload: { shaderId, intensity: 0.72 },
+      payload: {
+        shaderId: vfx.id,
+        name: vfx.name,
+        intensity: vfx.defaultIntensity,
+        speed: vfx.defaultSpeed,
+        scale: vfx.defaultScale,
+      },
     });
   }
 
@@ -370,7 +413,7 @@ export async function buildChatCutPlan(
   return {
     id: `plan_${Date.now()}`,
     prompt,
-    summary: `T-ChatCut v2 đã lập kế hoạch ${ops.length} thao tác chỉnh sửa trên ${targetClips.length} clip.`,
+    summary: `T-ChatCut v3 đã lập kế hoạch ${ops.length} thao tác chỉnh sửa trên ${targetClips.length} clip.`,
     ops,
     estimatedTimeSavedSec: ops.length * 12,
   };
@@ -492,14 +535,17 @@ export function applyChatCutPlan(project: Project, plan: ChatCutPlan): Project {
     } else if (op.op === 'add_effect' && effectTrack) {
       const id = `fx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const shaderId = String(op.payload?.shaderId ?? 'dreamy');
+      const name = String(op.payload?.name ?? shaderId);
       const intensity = Number(op.payload?.intensity ?? 0.72);
+      const speed = Number(op.payload?.speed ?? 1);
+      const scale = Number(op.payload?.scale ?? 1);
       const dur = op.durationUs ?? 3 * US_PER_SEC;
       next.clips[id] = {
         id,
         trackId: effectTrack.id,
         assetId: null,
         kind: 'effect',
-        name: `FX ${shaderId}`,
+        name: `FX ${name}`,
         timelineStartUs: op.timeUs ?? 0,
         durationUs: dur,
         sourceStartUs: 0,
@@ -513,7 +559,7 @@ export function applyChatCutPlan(project: Project, plan: ChatCutPlan): Project {
         speed: createDefaultSpeed(),
         audio: createDefaultAudioState(),
         keyframes: {},
-        effects: [{ id: `fxi_${Date.now()}`, name: shaderId, shaderId, intensity, speed: 1 }],
+        effects: [{ id: `fxi_${Date.now()}`, name, shaderId, intensity, speed, scale, enabled: true }],
         aiMattingEnabled: false,
         autoReframeEnabled: false,
       };

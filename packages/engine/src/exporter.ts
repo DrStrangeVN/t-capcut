@@ -33,6 +33,7 @@ export interface ExportOptions {
   rangeStartUs?: number | null;
   rangeEndUs?: number | null;
   lutsDir?: string;
+  presetsAssetsDir?: string;
   modelsDir?: string;
   onProgress?: (ev: ExportProgressEvent) => void;
   abortSignal?: AbortSignal;
@@ -663,12 +664,16 @@ export async function exportProject(
       vFilters.push(`vignette=angle=${(clip.colorGrade.vignette * 0.6).toFixed(3)}`);
     }
 
-    // Persistent 3D LUT (.cube)
+    // Persistent 3D LUT (.cube) — checks user uploaded LUTs, then built-in embedded LUT library
     if (clip.colorGrade.lutId) {
-      const lutPath =
-        project.luts?.[clip.colorGrade.lutId]?.filePath ||
-        (options.lutsDir ? path.join(options.lutsDir, `${clip.colorGrade.lutId}.cube`) : null);
-      if (lutPath && fs.existsSync(lutPath)) {
+      const lutIdClean = clip.colorGrade.lutId.replace(/\.cube$/i, '');
+      const lutCandidates = [
+        project.luts?.[clip.colorGrade.lutId]?.filePath,
+        options.lutsDir ? path.join(options.lutsDir, `${lutIdClean}.cube`) : null,
+        options.presetsAssetsDir ? path.join(options.presetsAssetsDir, 'luts', `${lutIdClean}.cube`) : null,
+      ].filter((p): p is string => Boolean(p));
+      const lutPath = lutCandidates.find((p) => fs.existsSync(p));
+      if (lutPath) {
         vFilters.push(`lut3d=file='${lutPath.replace(/'/g, "\\'")}'`);
       }
     }

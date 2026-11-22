@@ -25,6 +25,13 @@ import {
   type Track,
   type TrackType,
 } from '@t-capcut/schema';
+import {
+  TRANSITIONS_CATALOG,
+  type AudioPreset,
+  type StickerPreset,
+  type TextPreset,
+  type VfxPreset,
+} from '@t-capcut/presets';
 import { assetMediaUrl } from '../engine/api';
 import { playbackClock } from '../engine/PlaybackClock';
 import { useEditorStore } from '../store/useEditorStore';
@@ -107,8 +114,14 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
   const addMarkerAtPlayhead = useEditorStore((s) => s.addMarkerAtPlayhead);
   const addAssetToTimeline = useEditorStore((s) => s.addAssetToTimeline);
   const uploadMediaFile = useEditorStore((s) => s.uploadMediaFile);
+  const addBuiltinAudioToTimeline = useEditorStore((s) => s.addBuiltinAudioToTimeline);
+  const addStickerClip = useEditorStore((s) => s.addStickerClip);
+  const addVfxPreset = useEditorStore((s) => s.addVfxPreset);
+  const addTextPresetClip = useEditorStore((s) => s.addTextPresetClip);
+  const setClipTransition = useEditorStore((s) => s.setClipTransition);
 
   const [addTrackMenu, setAddTrackMenu] = useState(false);
+  const [quickTransMenu, setQuickTransMenu] = useState<{ clipId: string; x: number; y: number } | null>(null);
 
   const scope = project ? getScopeTracksAndClips(project, nestedScopeId) : null;
   const tracks = scope ? [...scope.tracks].sort((a, b) => b.index - a.index) : [];
@@ -305,6 +318,33 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
           ctx.fillRect(x + 6, cy + ch - 3, Math.max(0, cw - 12), 2.5);
         }
       }
+
+      // Draw [⊞] clickable cut-transition badges between adjacent video/image clips
+      if (tr.type === 'video' || tr.type === 'overlay') {
+        const sortedClips = [...trackClips].sort((a, b) => a.timelineStartUs - b.timelineStartUs);
+        for (let ci = 1; ci < sortedClips.length; ci++) {
+          const prevC = sortedClips[ci - 1]!;
+          const currC = sortedClips[ci]!;
+          if (Math.abs(prevC.timelineStartUs + prevC.durationUs - currC.timelineStartUs) <= 80_000) {
+            const bx = usToX(currC.timelineStartUs);
+            if (bx < -12 || bx > w + 12) continue;
+            const by = y + TRACK_H * 0.5;
+            const hasTrans = Boolean(currC.transitionIn && currC.transitionIn.type !== 'none');
+            ctx.fillStyle = hasTrans ? '#06b6d4' : 'rgba(15, 23, 42, 0.92)';
+            ctx.strokeStyle = hasTrans ? '#ffffff' : 'rgba(255,255,255,0.45)';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.roundRect(bx - 9, by - 9, 18, 18, 5);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = hasTrans ? '#04121C' : '#e2e8f0';
+            ctx.font = '700 10px -apple-system, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(hasTrans ? '⇄' : '+', bx, by + 0.5);
+          }
+        }
+      }
     });
 
     // Markers
@@ -446,6 +486,32 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
       dragRef.current = { kind: 'scrub' };
       setPlayheadUs(xToUs(x));
       return;
+    }
+
+    // Check [⊞] cut transition badge hit before clip hit test
+    if (y >= RULER_H) {
+      const rowIdx = Math.floor((y - RULER_H) / TRACK_H);
+      const tr = tracks[rowIdx];
+      if (tr && (tr.type === 'video' || tr.type === 'overlay')) {
+        const by = RULER_H + rowIdx * TRACK_H + TRACK_H * 0.5;
+        if (Math.abs(y - by) <= 11) {
+          const sortedClips = Object.values(scope.clips)
+            .filter((c) => c.trackId === tr.id)
+            .sort((a, b) => a.timelineStartUs - b.timelineStartUs);
+          for (let ci = 1; ci < sortedClips.length; ci++) {
+            const prevC = sortedClips[ci - 1]!;
+            const currC = sortedClips[ci]!;
+            if (Math.abs(prevC.timelineStartUs + prevC.durationUs - currC.timelineStartUs) <= 80_000) {
+              const bx = usToX(currC.timelineStartUs);
+              if (Math.abs(x - bx) <= 11) {
+                setSelectedClipId(currC.id);
+                setQuickTransMenu({ clipId: currC.id, x: e.clientX, y: e.clientY });
+                return;
+              }
+            }
+          }
+        }
+      }
     }
 
     const hit = hitTestClip(x, y);
@@ -698,6 +764,21 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
       return;
     }
 
+    const presetJson = e.dataTransfer.getData('application/x-tcapcut-preset');
+    if (presetJson) {
+      try {
+        const parsed = JSON.parse(presetJson) as { kind: string; preset: unknown };
+        setPlayheadUs(dropUs);
+        if (parsed.kind === 'audio') void addBuiltinAudioToTimeline(parsed.preset as AudioPreset, dropUs);
+        else if (parsed.kind === 'sticker') void addStickerClip(parsed.preset as StickerPreset, dropUs);
+        else if (parsed.kind === 'vfx') void addVfxPreset(parsed.preset as VfxPreset);
+        else if (parsed.kind === 'text') void addTextPresetClip(parsed.preset as TextPreset);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
     const file = e.dataTransfer.files?.[0];
     if (file) {
       void (async () => {
@@ -928,6 +1009,59 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
           />
         </div>
       </div>
+
+      {/* Cut Seam Quick Transition Picker Popover */}
+      {quickTransMenu && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 90 }}
+          onClick={() => setQuickTransMenu(null)}
+        >
+          <div
+            className="liquid-glass-modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              left: Math.min(window.innerWidth - 280, Math.max(12, quickTransMenu.x - 130)),
+              top: Math.max(16, quickTransMenu.y - 260),
+              width: 268,
+              maxHeight: 245,
+              padding: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, color: '#67e8f9' }}>
+              <span>⇄ Chuyển cảnh nhanh tại vết cắt</span>
+              <button
+                className="glass-btn"
+                style={{ fontSize: 10, padding: '2px 6px' }}
+                onClick={() => {
+                  void setClipTransition(quickTransMenu.clipId, 'none', false);
+                  setQuickTransMenu(null);
+                }}
+              >
+                Gỡ bỏ
+              </button>
+            </div>
+            <div className="glass-scroll" style={{ overflowY: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
+              {TRANSITIONS_CATALOG.map((tr) => (
+                <button
+                  key={tr.id}
+                  className="glass-btn"
+                  style={{ fontSize: 10.5, padding: '5px 6px', justifyContent: 'flex-start', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                  onClick={() => {
+                    void setClipTransition(quickTransMenu.clipId, tr.id, true);
+                    setQuickTransMenu(null);
+                  }}
+                >
+                  {tr.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

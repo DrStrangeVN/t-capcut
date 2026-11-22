@@ -243,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKScript
         env["TCAPCUT_SESSION_TOKEN"] = sessionToken
         env["TCAPCUT_DATA_DIR"] = dataDir
         env["TCAPCUT_STUDIO_DIST"] = studioDist
+        env["TCAPCUT_PRESETS_ASSETS"] = "\(resourceDir)/presets-assets"
         env["TCAPCUT_VISION_BIN"] = "\(resourceDir)/native/bin/tcapcut-vision"
         proc.environment = env
 

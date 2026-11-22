@@ -2,11 +2,28 @@
   <img src="assets/logo.png" width="128" height="128" alt="T-CapCut Obsidian Liquid Glass Logo" />
 </p>
 
-# T-CapCut v2.0 — Obsidian Liquid Glass Video Editor
+# T-CapCut v3.0 — Obsidian Liquid Glass Video Editor + Offline Creative Ecosystem
 
 **T-CapCut** là trình dựng phim phi tuyến (NLE) local-first dành cho macOS Apple Silicon (và Web), được phát triển từ kết quả phân tích kiến trúc `CapCut.app` kết hợp chuẩn **macOS Tahoe 2-Layer Liquid Glass HIG** (`NSGlassEffectView` cho thanh nổi/toolbar + Obsidian Matte tương phản cao cho Content/Colorist).
 
-## Nâng cấp nổi bật ở v2.0
+## Kho Nội Dung Sáng Tạo Offline Tích Hợp Sẵn (v3.0 — 100% Nhúng Trong App, Không Cần Internet)
+
+- **36 Hiệu Ứng GPU Shader VFX (`@t-capcut/presets`) + Multi-Pass Ping-Pong FBO Stack**:
+  - Xếp chồng nhiều hiệu ứng GPU đồng thời (Retro/VHS/Super 8mm/Halation, Anamorphic Flare/Prism/God Rays/Dreamy, Glitch/Datamosh/Holo/Cyber Grid, Beat Pulse/Fisheye/Kaleidoscope, Tilt-Shift/Mosaic/Frosted Glass, Duotone/Thermal/Night Vision/Sketch).
+- **24 Chuyển Cảnh Dual-Texture (`[⊞]` Nút Vết Cắt Nhanh Trên Timeline)**:
+  - Blend trực tiếp giữa frame cuối Clip A & frame đầu Clip B (Whip Left/Right/Up/Down, Zoom In/Out, Spin, Dip Black, Flash White, Film Burn, Light Leak, Iris Circle, Clock Wipe, Diagonal Slash, Glitch, Water Ripple, Swirl Blur) + **tùy chọn tự chèn SFX Whoosh/Glitch khớp nhịp**.
+- **24 Sticker Động & Hệ Thống Hạt Bay (`Snow`, `Rain`, `Dust`, `Hearts`, `Confetti`, `Bokeh`)**:
+  - Creator UI Buttons (`Subscribe + Bell`, `REC ● 4K`, `Countdown 3-2-1`, `Audio Wave HUD`, `Progress Bar`), Nhãn Sale/Rank/4K & Hiệu ứng Hạt Bay đồng nhất 100% giữa Preview & Export.
+- **25 Mẫu Chữ, Karaoke Viral & Lower-Third + Animation In / Out / Loop**:
+  - 8 phong cách Karaoke Viral (`Hormozi Pop`, `Classic Pill`, `Liquid Glass`, `Sweep Fill`, `Neon Cyber`, `Minimal Podcast`, `Comic Punch`, `Documentary`), 6 Intro Titles, 6 Lower-Thirds & 5 Social Review Cards.
+- **16 Bộ Màu 3D `.cube` LUT Chuyên Nghiệp (Cinema, Apple/Sony/DJI Log → Rec.709, Vlog, Moody) + Local Pack Importer**:
+  - Tích hợp sẵn 16 file `.cube` 17³ offline (`Kodak 2383`, `Fuji Eterna`, `CineStill 800T`, `Teal & Orange`, `Apple Log`, `Sony S-Log3`, `DJI D-Log M`, `Tokyo Cyber Neon`, `Leica B&W`...) và hỗ trợ nhập pack `.cube`/`.m4a` cá nhân.
+- **15 Bài Nhạc Nền Royalty-Free (Beat Grid BPM Chính Xác + Auto Beat Markers) & 40 Creator SFX**:
+  - Nghe thử Audio inline ngay trong Studio Palette trước khi kéo thả vào Timeline.
+- **12 Smart Video Templates + Slot Replacement Wizard**:
+  - Dựng nhanh TikTok Beat-Sync Flash, Daily Aesthetic Vlog, Hormozi Viral Talking Head, Product Commercial... chỉ với **Auto-Fill từ Media Bin**.
+
+## Nâng cấp kiến trúc Pro NLE (v2.0 → v3.0)
 
 - **Kiến trúc macOS Tahoe Liquid Glass + Pro NLE Ergonomics**:
   - Phân tách **Layer Chrome (Liquid Glass khúc xạ thật)** & **Layer Content (Matte tương phản cao tiết kiệm GPU)**, hỗ trợ `prefers-reduced-transparency`.
@@ -32,15 +49,15 @@
 ## Cài đặt & Sử dụng
 
 ### Cách 1: Cài đặt trực tiếp từ file `.dmg` (macOS Apple Silicon)
-1. Tải `T-CapCut-2.0.0-arm64.dmg` từ mục **Releases** (hoặc build bằng `pnpm build:app`).
-2. Mở file `.dmg`, kéo **T-CapCut.app** vào thư mục **Applications** và mở ứng dụng. *(Lưu ý: Để xuất video cần FFmpeg trên hệ thống nếu chưa cài: `brew install ffmpeg`)*
+1. Tải `T-CapCut-3.0.0-arm64.dmg` từ mục **Releases** (hoặc build bằng `pnpm build:app`).
+2. Mở file `.dmg`, kéo **T-CapCut.app** vào thư mục **Applications** và mở ứng dụng. *(Toàn bộ 36 Shader VFX, 24 Transition, 16 `.cube` LUT, 15 Music, 40 SFX, 24 Sticker & 12 Video Template đã nhúng sẵn 100% offline. Để xuất video cần FFmpeg trên hệ thống nếu chưa cài: `brew install ffmpeg`)*
 
 ### Cách 2: Chạy từ mã nguồn (Development)
 ```bash
 pnpm install
-pnpm test        # Chạy toàn bộ test (schema, engine, mcp, cli)
+pnpm test        # Chạy toàn bộ test (schema, presets, engine, mcp, cli)
 pnpm dev         # Chạy Engine (:47890) + Studio UI (:5173)
-pnpm build:app   # Đóng gói dist/T-CapCut.app & dist/T-CapCut-2.0.0-arm64.dmg
+pnpm build:app   # Đóng gói dist/T-CapCut.app & dist/T-CapCut-3.0.0-arm64.dmg
 ```
 
 ## Phím tắt Pro NLE & CapCut

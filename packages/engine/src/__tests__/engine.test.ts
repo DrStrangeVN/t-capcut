@@ -13,6 +13,7 @@ import {
   createDefaultTextStyle,
   createDefaultTransform,
   type Clip,
+  type MediaAsset,
 } from '@t-capcut/schema';
 import {
   ProjectDatabase,
@@ -240,7 +241,7 @@ describe('@t-capcut/engine', () => {
       assert.equal(healthResp.status, 200);
       const healthJson = (await healthResp.json()) as { ok: boolean; version: string };
       assert.equal(healthJson.ok, true);
-      assert.equal(healthJson.version, '2.0.0');
+      assert.equal(healthJson.version, '3.0.0');
 
       // Test SSE /api/export/start + /events progress stream
       const startRes = await fetch(`${url}/api/export/start`, {
@@ -302,6 +303,69 @@ describe('@t-capcut/engine', () => {
       assert.equal(probedPipe.kind, 'video');
       assert.equal(probedPipe.width, 320);
       assert.equal(probedPipe.height, 180);
+
+      // Verify v3.0.0 Embedded Offline Presets endpoints (LUTs, Audio Range 206, Audio Add + ChatCut v3)
+      const presetLutRes = await fetch(`${url}/api/presets/luts/lut_kodak_2383`, { headers: authHeaders });
+      assert.equal(presetLutRes.status, 200);
+      const presetLutJson = (await presetLutRes.json()) as { id: string; size: number; data: number[] };
+      assert.equal(presetLutJson.id, 'lut_kodak_2383');
+      assert.equal(presetLutJson.size, 17);
+      assert.equal(presetLutJson.data.length, 17 * 17 * 17 * 3);
+
+      const audioRangeRes = await fetch(`${url}/api/presets/audio/mus_lofi_midnight.m4a`, {
+        headers: { ...authHeaders, Range: 'bytes=0-1023' },
+      });
+      assert.equal(audioRangeRes.status, 206);
+      const audioBytes = await audioRangeRes.arrayBuffer();
+      assert.equal(audioBytes.byteLength, 1024);
+
+      const addAudioRes = await fetch(`${url}/api/presets/audio/add`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presetId: 'mus_beat_tiktok128' }),
+      });
+      assert.equal(addAudioRes.status, 200);
+      const { asset: addedMus } = (await addAudioRes.json()) as { asset: MediaAsset };
+      assert.equal(addedMus.kind, 'audio');
+      assert.ok((addedMus.beatsUs?.length ?? 0) > 15);
+
+      pipeProj.clips.clip_chat = {
+        id: 'clip_chat',
+        trackId: pipeProj.tracks.find((t) => t.isMain)?.id ?? 'track_main',
+        assetId: null,
+        kind: 'video',
+        name: 'Sample Clip',
+        timelineStartUs: 0,
+        durationUs: 3 * US_PER_SEC,
+        sourceStartUs: 0,
+        sourceDurationUs: 3 * US_PER_SEC,
+        locked: false,
+        disabled: false,
+        transform: createDefaultTransform(),
+        colorGrade: createDefaultColorGrade(),
+        chromaKey: createDefaultChromaKey(),
+        mask: createDefaultMask(),
+        speed: createDefaultSpeed(),
+        audio: createDefaultAudioState(),
+        keyframes: {},
+        effects: [],
+        aiMattingEnabled: false,
+        autoReframeEnabled: false,
+      };
+      server.db.saveImportedProject(pipeProj);
+
+      const v3ChatRes = await fetch(`${url}/api/chatcut/plan`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: pipeProj.id,
+          prompt: 'Gắn màu Kodak 2383 và hiệu ứng Halation',
+        }),
+      });
+      assert.equal(v3ChatRes.status, 200);
+      const { plan: v3Plan } = (await v3ChatRes.json()) as { plan: { ops: Array<{ op: string; payload?: Record<string, unknown> }> } };
+      assert.ok(v3Plan.ops.some((o) => o.op === 'apply_color' && o.payload?.lutId === 'lut_kodak_2383'));
+      assert.ok(v3Plan.ops.some((o) => o.op === 'add_effect' && o.payload?.shaderId === 'halation'));
     } finally {
       await server.stop();
       fs.rmSync(tmpDir, { recursive: true, force: true });

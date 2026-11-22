@@ -18,6 +18,7 @@ import { HistoryDrawer } from './components/HistoryDrawer';
 import { LeftStudioPanel } from './components/LeftStudioPanel';
 import { PlayerViewport } from './components/PlayerViewport';
 import { RightInspector } from './components/RightInspector';
+import { TemplateModal } from './components/TemplateModal';
 import { TimelineCanvas } from './components/TimelineCanvas';
 import { playbackClock } from './engine/PlaybackClock';
 import { useEditorStore } from './store/useEditorStore';
@@ -382,6 +383,7 @@ export const App: React.FC = () => {
       )}
 
       <HistoryDrawer />
+      <TemplateModal />
       <ChatCutModal />
       <ExportModal />
     </div>

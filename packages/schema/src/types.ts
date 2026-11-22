@@ -204,27 +204,57 @@ export interface TextStyleState {
   lineHeight: number;
   karaokeEnabled: boolean;
   karaokeActiveColor: string;
-  karaokePreset: 'none' | 'capcut-yellow' | 'neon-cyan' | 'pop-bounce' | 'word-highlight';
+  karaokePreset:
+    | 'none'
+    | 'capcut-yellow'
+    | 'hormozi-pop'
+    | 'classic-pill'
+    | 'liquid-glass'
+    | 'sweep-fill'
+    | 'neon-cyber'
+    | 'minimal-podcast'
+    | 'comic-punch'
+    | 'doc-serif'
+    | 'neon-cyan'
+    | 'pop-bounce'
+    | 'word-highlight';
   words?: WordTimestamp[];
-  animationIn?: 'none' | 'fade' | 'pop' | 'typewriter' | 'slide-up';
+  animationIn?:
+    | 'none'
+    | 'fade'
+    | 'pop'
+    | 'typewriter'
+    | 'slide-up'
+    | 'slide-down'
+    | 'slide-left'
+    | 'slide-right'
+    | 'blur-in'
+    | 'glitch'
+    | 'zoom-slam';
+  animationOut?: 'none' | 'fade' | 'pop' | 'slide-down' | 'zoom-out';
+  animationLoop?: 'none' | 'float' | 'pulse' | 'neon-flicker' | 'wave' | 'shake';
   animationDurationUs?: Microseconds;
+  badgeText?: string;
+  roleLabel?: string;
+}
+
+export interface StickerState {
+  presetId: string;
+  category: 'creator' | 'particle' | 'badge';
+  name: string;
+  label?: string;
+  primaryColor: string;
+  secondaryColor: string;
+  particleType?: 'snow' | 'rain' | 'dust' | 'hearts' | 'confetti' | 'bokeh' | null;
+  iconType?: string;
 }
 
 export interface TransitionConfig {
   id: string;
   name: string;
-  type:
-    | 'none'
-    | 'dissolve'
-    | 'glitch'
-    | 'zoom_blur'
-    | 'spin'
-    | 'wipe_left'
-    | 'wipe_right'
-    | 'film_burn'
-    | 'chromatic'
-    | 'custom';
+  type: string; // e.g. dissolve, whip_left, zoom_in, film_burn, iris_circle, glitch, etc.
   durationUs: Microseconds;
+  easing?: 'linear' | 'easeInOut' | 'expoOut';
   customFragmentShader?: string;
 }
 
@@ -234,6 +264,8 @@ export interface ShaderEffectInstance {
   shaderId: string;
   intensity: number; // 0..1
   speed: number; // 0..3
+  scale?: number; // 0.2..3
+  enabled?: boolean;
   customFragmentGlsl?: string;
 }
 
@@ -270,6 +302,7 @@ export interface Clip {
   audio: AudioClipState;
   keyframes: KeyframeMap;
   text?: TextStyleState;
+  sticker?: StickerState;
   transitionIn?: TransitionConfig | null;
   effects: ShaderEffectInstance[];
   aiMattingEnabled: boolean;
