@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   US_PER_SEC,
+  computeDurationFromSpeed,
+  applyJsonPatch,
   createDefaultAudioState,
   createDefaultChromaKey,
   createDefaultColorGrade,
@@ -10,6 +12,7 @@ import {
   createDefaultTextStyle,
   createDefaultTransform,
   createEmptyProject,
+  createJsonPatch,
   evaluateCubicBezier,
   exportSubtitlesToASS,
   exportSubtitlesToSRT,
@@ -21,6 +24,7 @@ import {
   mapLocalTimelineToSourceUs,
   parseCubeLUT,
   parseSRT,
+  resolveEffectiveClips,
   type Clip,
 } from '../index.js';
 
@@ -169,5 +173,77 @@ LUT_3D_SIZE 2
     assert.equal(parsed.title, 'Teal Orange');
     assert.equal(parsed.size, 2);
     assert.equal(parsed.data.length, 24);
+  });
+
+  it('flattens compound clips with inherited offsets/transforms and round-trips RFC6902 JSON patches', () => {
+    const project = createEmptyProject('p_cmp', 'Compound Test');
+    const baseClip: Clip = {
+      id: 'inner_1',
+      trackId: 'track_main',
+      assetId: 'a1',
+      kind: 'video',
+      name: 'clip1',
+      timelineStartUs: 1_000_000,
+      durationUs: 2_000_000,
+      sourceStartUs: 0,
+      sourceDurationUs: 2_000_000,
+      locked: false,
+      disabled: false,
+      transform: { ...createDefaultTransform(), opacity: 0.5 },
+      colorGrade: createDefaultColorGrade(),
+      chromaKey: createDefaultChromaKey(),
+      mask: createDefaultMask(),
+      speed: createDefaultSpeed(),
+      audio: createDefaultAudioState(),
+      keyframes: {},
+      effects: [],
+      aiMattingEnabled: false,
+      autoReframeEnabled: false,
+    };
+    project.nestedTimelines = {
+      cmp_1: {
+        id: 'cmp_1',
+        name: 'Nested',
+        tracks: [{ ...project.tracks[3] }],
+        clips: {
+          inner_1: baseClip,
+          inner_2: { ...baseClip, id: 'inner_2', timelineStartUs: 3_000_000 },
+        },
+      },
+    };
+    project.clips['c_cmp'] = {
+      ...baseClip,
+      id: 'c_cmp',
+      kind: 'compound',
+      assetId: null,
+      compoundTimelineId: 'cmp_1',
+      timelineStartUs: 5_000_000,
+      durationUs: 4_000_000,
+      transform: { ...createDefaultTransform(), opacity: 0.8 },
+    };
+
+    const flat = resolveEffectiveClips(project);
+    assert.equal(flat.length, 2);
+    assert.equal(flat[0].timelineStartUs, 5_000_000);
+    assert.equal(flat[1].timelineStartUs, 7_000_000);
+    assert.ok(Math.abs(flat[0].transform.opacity - 0.4) < 1e-6);
+
+    const durCurve = computeDurationFromSpeed(4_000_000, {
+      mode: 'curve',
+      rate: 1,
+      pitchPreserved: true,
+      reverse: false,
+      curvePoints: [{ position: 0, speed: 2 }, { position: 1, speed: 2 }],
+    });
+    assert.ok(Math.abs(durCurve - 2_000_000) < 10_000);
+
+    const mutated = JSON.parse(JSON.stringify(project)) as typeof project;
+    mutated.name = 'Updated Compound';
+    mutated.clips['c_cmp'].transform.x = 0.25;
+    const fwd = createJsonPatch(project, mutated);
+    const inv = createJsonPatch(mutated, project);
+    assert.ok(fwd.length === 2);
+    assert.deepEqual(applyJsonPatch(project, fwd), mutated);
+    assert.deepEqual(applyJsonPatch(mutated, inv), project);
   });
 });

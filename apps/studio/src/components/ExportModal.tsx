@@ -1,48 +1,124 @@
-import React, { useState } from 'react';
-import { Download, FileCode, ListPlus, Rocket, X, Zap } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Download, FileCode, FolderOpen, ListPlus, Rocket, Sparkles, X, Zap } from 'lucide-react';
+import { US_PER_SEC } from '@t-capcut/schema';
 import { engineApi } from '../engine/api';
+import { runWysiwygClientExport } from '../engine/WysiwygExporter';
 import { useEditorStore } from '../store/useEditorStore';
 
 export const ExportModal: React.FC = () => {
   const open = useEditorStore((s) => s.exportModalOpen);
   const project = useEditorStore((s) => s.project);
   const projectsList = useEditorStore((s) => s.projectsList);
+  const loadedLuts = useEditorStore((s) => s.loadedLuts);
   const setExportModalOpen = useEditorStore((s) => s.setExportModalOpen);
   const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
 
-  const [mode, setMode] = useState<'hardware' | 'lossless-hybrid' | 'audio-only' | 'subtitle-only'>('hardware');
+  const [mode, setMode] = useState<'hardware' | 'wysiwyg-pipe' | 'lossless-hybrid' | 'audio-only' | 'subtitle-only'>('hardware');
   const [codec, setCodec] = useState<'h264' | 'hevc' | 'prores'>('h264');
   const [fps, setFps] = useState<number>(30);
   const [subtitleFormat, setSubtitleFormat] = useState<'srt' | 'ass' | 'vtt'>('ass');
   const [burnSubtitles, setBurnSubtitles] = useState(true);
   const [loudnorm, setLoudnorm] = useState(true);
+  const [useInOutRange, setUseInOutRange] = useState(false);
+
   const [exporting, setExporting] = useState(false);
+  const [progressPct, setProgressPct] = useState(0);
+  const [progressSpeed, setProgressSpeed] = useState('');
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [lastOutputPath, setLastOutputPath] = useState<string | null>(null);
   const [resultInfo, setResultInfo] = useState<string | null>(null);
   const [batchQueue, setBatchQueue] = useState<Array<{ projectId: string; name: string; mode: string }>>([]);
 
+  const cancelFlagRef = useRef(false);
+  const unsubSseRef = useRef<(() => void) | null>(null);
+
   if (!open || !project) return null;
+
+  const hasRange =
+    project.inPointUs != null &&
+    project.outPointUs != null &&
+    project.outPointUs > project.inPointUs + 100_000;
 
   const handleExport = async () => {
     setExporting(true);
+    setProgressPct(2);
+    setProgressSpeed('');
     setResultInfo(null);
+    setLastOutputPath(null);
+    cancelFlagRef.current = false;
+
+    const rangeStartUs = useInOutRange && hasRange ? project.inPointUs : null;
+    const rangeEndUs = useInOutRange && hasRange ? project.outPointUs : null;
+
     try {
-      const { result } = await engineApi.exportVideo(project.id, {
+      if (mode === 'wysiwyg-pipe') {
+        const res = await runWysiwygClientExport(project, {
+          codec,
+          fps,
+          burnSubtitles,
+          loudnorm,
+          rangeStartUs,
+          rangeEndUs,
+          loadedLuts,
+          onJobCreated: (jid) => setActiveJobId(jid),
+          onProgress: (pct, spd) => {
+            setProgressPct(pct);
+            setProgressSpeed(spd);
+          },
+          shouldCancel: () => cancelFlagRef.current,
+        });
+        const kb = Math.round(res.fileSizeBytes / 1024);
+        setLastOutputPath(res.outputPath);
+        setResultInfo(`Xuất 100% WYSIWYG thành công (${res.modeUsed}) · ${kb} KB → ${res.outputPath}`);
+        setStatusMessage(`Đã xuất WYSIWYG xong: ${res.outputPath}`);
+        setExporting(false);
+        return;
+      }
+
+      const { jobId } = await engineApi.startExport(project.id, {
         mode,
         codec,
         fps,
         burnSubtitles,
         loudnorm,
         subtitleFormat,
+        rangeStartUs,
+        rangeEndUs,
       });
-      const kb = Math.round(result.fileSizeBytes / 1024);
-      setResultInfo(
-        `Xuất thành công (${result.modeUsed}) trong ${result.durationMs}ms · ${kb} KB → ${result.outputPath}`
-      );
-      setStatusMessage(`Đã xuất xong: ${result.outputPath}`);
+      setActiveJobId(jobId);
+
+      await new Promise<void>((resolve, reject) => {
+        unsubSseRef.current = engineApi.subscribeExportEvents(jobId, {
+          onProgress: (ev) => {
+            setProgressPct(ev.percent);
+            setProgressSpeed(ev.speed || '');
+          },
+          onDone: (res) => {
+            setProgressPct(100);
+            const kb = Math.round(res.fileSizeBytes / 1024);
+            setLastOutputPath(res.outputPath);
+            setResultInfo(`Xuất thành công (${res.modeUsed}) trong ${res.durationMs}ms · ${kb} KB → ${res.outputPath}`);
+            setStatusMessage(`Đã xuất xong: ${res.outputPath}`);
+            resolve();
+          },
+          onError: (msg) => reject(new Error(msg)),
+          onCancelled: () => reject(new Error('Đã hủy tiến trình xuất video')),
+        });
+      });
     } catch (err) {
-      setResultInfo(`Lỗi: ${err instanceof Error ? err.message : String(err)}`);
+      setResultInfo(`Thông báo: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
+      unsubSseRef.current?.();
+      unsubSseRef.current = null;
       setExporting(false);
+      setActiveJobId(null);
+    }
+  };
+
+  const handleCancel = async () => {
+    cancelFlagRef.current = true;
+    if (activeJobId) {
+      await engineApi.cancelExport(activeJobId).catch(() => {});
     }
   };
 
@@ -78,7 +154,7 @@ export const ExportModal: React.FC = () => {
         position: 'fixed',
         inset: 0,
         zIndex: 50,
-        background: 'rgba(4, 6, 12, 0.55)',
+        background: 'rgba(4, 6, 12, 0.58)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -88,13 +164,13 @@ export const ExportModal: React.FC = () => {
     >
       <div
         className="liquid-glass-modal"
-        style={{ width: 580, maxWidth: '100%', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}
+        style={{ width: 610, maxWidth: '100%', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700 }}>
             <Rocket size={18} color="#22d3ee" />
-            <span>Xuất Video, Batch Render & Chuyển Tiếp Pro</span>
+            <span>Xuất Video WYSIWYG, SSE Real-Time & Interop</span>
           </div>
           <button className="glass-btn" onClick={() => setExportModalOpen(false)}>
             <X size={14} />
@@ -103,20 +179,23 @@ export const ExportModal: React.FC = () => {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <button className={`glass-btn ${mode === 'hardware' ? 'glass-btn-active' : ''}`} onClick={() => setMode('hardware')}>
-            <Rocket size={13} /> Hardware VideoToolbox
+            <Rocket size={13} /> Hardware VideoToolbox (Nhanh)
+          </button>
+          <button className={`glass-btn ${mode === 'wysiwyg-pipe' ? 'glass-btn-active' : ''}`} onClick={() => setMode('wysiwyg-pipe')}>
+            <Sparkles size={13} color="#a78bfa" /> Exact 100% WYSIWYG GPU Pipe
           </button>
           <button className={`glass-btn ${mode === 'lossless-hybrid' ? 'glass-btn-active' : ''}`} onClick={() => setMode('lossless-hybrid')}>
             <Zap size={13} color="#fbbf24" /> Smart Lossless Copy
           </button>
           <button className={`glass-btn ${mode === 'audio-only' ? 'glass-btn-active' : ''}`} onClick={() => setMode('audio-only')}>
-            Audio Only (WAV)
+            Audio Multi-Track Mix (.WAV)
           </button>
-          <button className={`glass-btn ${mode === 'subtitle-only' ? 'glass-btn-active' : ''}`} onClick={() => setMode('subtitle-only')}>
-            Subtitles (.SRT / .ASS / .VTT)
+          <button className={`glass-btn ${mode === 'subtitle-only' ? 'glass-btn-active' : ''}`} style={{ gridColumn: '1 / -1' }} onClick={() => setMode('subtitle-only')}>
+            Subtitles Only (.SRT / .ASS Karaoke / .VTT)
           </button>
         </div>
 
-        {(mode === 'hardware' || mode === 'lossless-hybrid') && (
+        {(mode === 'hardware' || mode === 'lossless-hybrid' || mode === 'wysiwyg-pipe') && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Codec Phần Cứng</label>
@@ -145,7 +224,7 @@ export const ExportModal: React.FC = () => {
           </select>
         )}
 
-        <div style={{ display: 'flex', gap: 16, fontSize: 12 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <input type="checkbox" checked={burnSubtitles} onChange={(e) => setBurnSubtitles(e.target.checked)} />
             Ghi cứng phụ đề Karaoke
@@ -154,17 +233,41 @@ export const ExportModal: React.FC = () => {
             <input type="checkbox" checked={loudnorm} onChange={(e) => setLoudnorm(e.target.checked)} />
             Chuẩn hóa âm lượng -14 LUFS
           </label>
+          {hasRange && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#22d3ee' }}>
+              <input type="checkbox" checked={useInOutRange} onChange={(e) => setUseInOutRange(e.target.checked)} />
+              Xuất vùng In/Out ({(project.inPointUs! / US_PER_SEC).toFixed(1)}s → {(project.outPointUs! / US_PER_SEC).toFixed(1)}s)
+            </label>
+          )}
         </div>
 
+        {/* Live Progress Bar */}
+        {exporting && (
+          <div style={{ padding: 10, borderRadius: 12, background: 'rgba(34, 211, 238, 0.08)', border: '1px solid rgba(34, 211, 238, 0.3)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5 }}>
+              <span>Đang render phần cứng...</span>
+              <span className="mono" style={{ color: '#22d3ee' }}>{progressPct}% {progressSpeed ? `· ${progressSpeed}` : ''}</span>
+            </div>
+            <div style={{ height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.1)', overflow: 'hidden' }}>
+              <div style={{ width: `${progressPct}%`, height: '100%', background: 'linear-gradient(90deg, #22d3ee, #6366f1)', transition: 'width 120ms linear' }} />
+            </div>
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="glass-btn glass-btn-primary" style={{ flex: 1 }} disabled={exporting} onClick={() => void handleExport()}>
-            <Download size={14} /> {exporting ? 'Đang xuất...' : 'Xuất Ngay'}
-          </button>
+          {!exporting ? (
+            <button className="glass-btn glass-btn-primary" style={{ flex: 1 }} onClick={() => void handleExport()}>
+              <Download size={14} /> Xuất Ngay
+            </button>
+          ) : (
+            <button className="glass-btn" style={{ flex: 1, borderColor: '#fb7185', color: '#fb7185' }} onClick={() => void handleCancel()}>
+              <X size={14} /> Hủy Xuất Video
+            </button>
+          )}
           <button
             className="glass-btn"
-            onClick={() =>
-              setBatchQueue((q) => [...q, { projectId: project.id, name: project.name, mode }])
-            }
+            disabled={exporting}
+            onClick={() => setBatchQueue((q) => [...q, { projectId: project.id, name: project.name, mode }])}
           >
             <ListPlus size={14} /> + Hàng Đợi ({batchQueue.length})
           </button>
@@ -180,8 +283,13 @@ export const ExportModal: React.FC = () => {
         )}
 
         {resultInfo && (
-          <div className="mono" style={{ padding: 10, borderRadius: 10, background: 'rgba(52, 211, 153, 0.1)', border: '1px solid rgba(52,211,153,0.35)', fontSize: 11, wordBreak: 'break-all' }}>
-            {resultInfo}
+          <div className="mono" style={{ padding: 10, borderRadius: 10, background: 'rgba(52, 211, 153, 0.1)', border: '1px solid rgba(52,211,153,0.35)', fontSize: 11, wordBreak: 'break-all', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div>{resultInfo}</div>
+            {lastOutputPath && (
+              <button className="glass-btn" style={{ alignSelf: 'flex-start' }} onClick={() => void engineApi.revealInFinder(lastOutputPath)}>
+                <FolderOpen size={13} color="#22d3ee" /> Mở file trong Finder
+              </button>
+            )}
           </div>
         )}
 

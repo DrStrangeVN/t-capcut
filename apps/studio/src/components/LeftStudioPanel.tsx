@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import {
   AudioWaveform,
   Bot,
+  CheckCircle2,
   Code2,
   Download,
   FileJson,
@@ -62,7 +63,11 @@ const DEFAULT_CUSTOM_GLSL = `vec4 effectMain(sampler2D tex, vec2 uv, float time,
   return c;
 }`;
 
-export const LeftStudioPanel: React.FC = () => {
+interface LeftStudioPanelProps {
+  widthPx?: number;
+}
+
+export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 316 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftInputRef = useRef<HTMLInputElement | null>(null);
   const lutInputRef = useRef<HTMLInputElement | null>(null);
@@ -91,6 +96,7 @@ export const LeftStudioPanel: React.FC = () => {
   const setPlayheadUs = useEditorStore((s) => s.setPlayheadUs);
   const commitProject = useEditorStore((s) => s.commitProject);
   const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
+  const setErrorMessage = useEditorStore((s) => s.setErrorMessage);
 
   const [localPathInput, setLocalPathInput] = useState('');
   const [selectedAssetId, setSelectedAssetId] = useState<string>('');
@@ -101,8 +107,23 @@ export const LeftStudioPanel: React.FC = () => {
   const activeAsset = (selectedAssetId && project?.assets[selectedAssetId]) || assets[0] || null;
   const selectedClip = project && selectedClipId ? project.clips[selectedClipId] : null;
 
+  const handleNativeImportClick = async () => {
+    const native = (window as unknown as {
+      tcapcutNative?: { pickLocalFiles?: () => Promise<string[]> };
+    }).tcapcutNative;
+
+    if (native?.pickLocalFiles) {
+      const paths = await native.pickLocalFiles();
+      for (const p of paths) {
+        await importMediaPath(p);
+      }
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
   return (
-    <div className="liquid-glass-panel" style={{ width: 316, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+    <div className="nle-content-surface" style={{ width: widthPx, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', flexShrink: 0 }}>
       <div style={{ display: 'flex', gap: 4, padding: 8, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         {TABS.map((t) => (
           <button
@@ -121,7 +142,7 @@ export const LeftStudioPanel: React.FC = () => {
         {leftTab === 'media' && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <button className="glass-btn glass-btn-primary" onClick={() => fileInputRef.current?.click()}>
+              <button className="glass-btn glass-btn-primary" onClick={() => void handleNativeImportClick()}>
                 <Upload size={13} /> Nhập File
               </button>
               <button className="glass-btn" onClick={() => void createDemoSample()}>
@@ -178,17 +199,21 @@ export const LeftStudioPanel: React.FC = () => {
             </div>
 
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
-              Thư viện Tư liệu ({assets.length})
+              Thư viện Tư liệu ({assets.length}) — Kéo thả trực tiếp vào Timeline
             </div>
 
             {assets.length === 0 ? (
               <div style={{ padding: 18, textAlign: 'center', fontSize: 12, color: 'var(--text-secondary)', border: '1px dashed rgba(255,255,255,0.14)', borderRadius: 12 }}>
-                Chưa có tư liệu. Hãy bấm <strong>Video Mẫu</strong> để trải nghiệm ngay hoặc tải video từ máy.
+                Chưa có tư liệu. Hãy bấm <strong>Video Mẫu</strong> để trải nghiệm ngay hoặc kéo file từ Finder vào Timeline.
               </div>
             ) : (
               assets.map((a) => (
                 <div
                   key={a.id}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/x-tcapcut-asset', JSON.stringify(a));
+                  }}
                   onClick={() => setSelectedAssetId(a.id)}
                   style={{
                     padding: 10,
@@ -198,7 +223,7 @@ export const LeftStudioPanel: React.FC = () => {
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 6,
-                    cursor: 'pointer',
+                    cursor: 'grab',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
@@ -273,7 +298,7 @@ export const LeftStudioPanel: React.FC = () => {
         {leftTab === 'effects' && (
           <>
             <button className="glass-btn glass-btn-primary" onClick={() => lutInputRef.current?.click()}>
-              <Upload size={13} /> Nạp 3D LUT (.cube)
+              <Upload size={13} /> Nạp 3D LUT (.cube — Lưu bền vững)
             </button>
             <input
               ref={lutInputRef}
@@ -282,24 +307,34 @@ export const LeftStudioPanel: React.FC = () => {
               style={{ display: 'none' }}
               onChange={async (e) => {
                 const file = e.target.files?.[0];
-                if (!file) return;
-                const content = await file.text();
-                const parsed = await engineApi.parseCubeLut(content);
-                const id = `lut_${Date.now()}`;
-                registerLut({
-                  id,
-                  title: parsed.title,
-                  size: parsed.size,
-                  data: new Float32Array(parsed.data),
-                });
-                if (selectedClip) {
-                  await updateSelectedClip(`Áp dụng LUT ${parsed.title}`, (c) => {
-                    c.colorGrade.lutId = id;
-                    c.colorGrade.lutName = parsed.title;
-                    c.colorGrade.lutIntensity = 0.85;
+                if (!file || !project) return;
+                try {
+                  const content = await file.text();
+                  const uploaded = await engineApi.uploadLut(content);
+                  registerLut({
+                    id: uploaded.id,
+                    title: uploaded.title,
+                    size: uploaded.size,
+                    data: new Float32Array(uploaded.data),
                   });
+                  const next = JSON.parse(JSON.stringify(project)) as typeof project;
+                  next.luts = next.luts ?? {};
+                  next.luts[uploaded.id] = {
+                    id: uploaded.id,
+                    title: uploaded.title,
+                    size: uploaded.size,
+                    filePath: uploaded.filePath,
+                  };
+                  if (selectedClipId && next.clips[selectedClipId]) {
+                    next.clips[selectedClipId].colorGrade.lutId = uploaded.id;
+                    next.clips[selectedClipId].colorGrade.lutName = uploaded.title;
+                    next.clips[selectedClipId].colorGrade.lutIntensity = 0.85;
+                  }
+                  await commitProject(`Nạp 3D LUT ${uploaded.title}`, next);
+                  setStatusMessage(`Đã lưu 3D LUT: ${uploaded.title} (${uploaded.size}³)`);
+                } catch (err) {
+                  setErrorMessage(`Lỗi nạp LUT: ${err instanceof Error ? err.message : String(err)}`);
                 }
-                setStatusMessage(`Đã nạp 3D LUT: ${parsed.title} (${parsed.size}³)`);
                 e.target.value = '';
               }}
             />
@@ -422,10 +457,14 @@ export const LeftStudioPanel: React.FC = () => {
         {leftTab === 'ai' && (
           <>
             <div style={{ padding: 10, borderRadius: 12, background: 'rgba(34, 211, 238, 0.08)', border: '1px solid rgba(34,211,238,0.28)', fontSize: 11, display: 'flex', flexDirection: 'column', gap: 5 }}>
-              <div style={{ fontWeight: 600, color: '#67e8f9' }}>On-Device Apple Silicon AI</div>
+              <div style={{ fontWeight: 600, color: '#67e8f9', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <CheckCircle2 size={13} /> System & AI Dependency Doctor
+              </div>
+              <div>FFmpeg/FFprobe: {health?.ai.ffmpegAvailable ? 'Sẵn sàng (VideoToolbox)' : 'Thiếu FFmpeg (brew install ffmpeg)'}</div>
               <div>Apple Vision/Metal: {health?.ai.visionAvailable ? 'Sẵn sàng (Offline)' : 'Chưa biên dịch'}</div>
+              <div>Apple Speech On-Device: {health?.ai.appleSpeechAvailable ? 'Sẵn sàng' : 'Chưa bật'}</div>
               <div>
-                Whisper ASR: {health?.ai.whisperModelPath ? 'Sẵn sàng (Offline GGML)' : 'Chưa tải model (Đang dùng VAD)'}
+                Whisper ASR: {health?.ai.whisperModelPath ? 'Sẵn sàng (Offline GGML)' : 'Chưa tải model'}
               </div>
               {!health?.ai.whisperModelPath && (
                 <button className="glass-btn" style={{ marginTop: 2 }} onClick={() => void downloadWhisperModel('tiny')}>

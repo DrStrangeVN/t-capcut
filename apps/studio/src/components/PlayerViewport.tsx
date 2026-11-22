@@ -1,10 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Activity,
+  Crop,
   Eye,
   Film,
   Maximize2,
   Pause,
+  Pipette,
   Play,
+  RotateCw,
   Scissors,
   SkipBack,
   SkipForward,
@@ -14,12 +18,17 @@ import {
 import {
   US_PER_SEC,
   getClipPropertyAtTime,
+  isClipAudioAudible,
   mapLocalTimelineToSourceUs,
+  resolveEffectiveClips,
   type Clip,
 } from '@t-capcut/schema';
-import { mediaStreamUrl } from '../engine/api';
+import { assetMediaUrl } from '../engine/api';
+import { AudioGraphEngine } from '../engine/AudioGraphEngine';
+import { playbackClock } from '../engine/PlaybackClock';
 import { WebGLCompositor } from '../engine/WebGLCompositor';
 import { useEditorStore } from '../store/useEditorStore';
+import { VideoScopesPanel } from './VideoScopesPanel';
 
 function formatTimecode(us: number): string {
   const totalMs = Math.max(0, Math.floor(us / 1000));
@@ -30,18 +39,60 @@ function formatTimecode(us: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
 }
 
+type GizmoDragState =
+  | {
+      kind: 'move';
+      clipId: string;
+      startX: number;
+      startY: number;
+      origX: number;
+      origY: number;
+    }
+  | {
+      kind: 'scale';
+      clipId: string;
+      centerClientX: number;
+      centerClientY: number;
+      startDist: number;
+      origScaleX: number;
+      origScaleY: number;
+    }
+  | {
+      kind: 'rotate';
+      clipId: string;
+      centerClientX: number;
+      centerClientY: number;
+      startAngle: number;
+      origRotation: number;
+    };
+
 export const PlayerViewport: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const textOverlayContainerRef = useRef<HTMLDivElement | null>(null);
+  const timecodeRef = useRef<HTMLSpanElement | null>(null);
+  const renderMsRef = useRef<HTMLSpanElement | null>(null);
+  const shuttleBadgeRef = useRef<HTMLSpanElement | null>(null);
+  const vuLeftRef = useRef<HTMLDivElement | null>(null);
+  const vuRightRef = useRef<HTMLDivElement | null>(null);
+
   const compositorRef = useRef<WebGLCompositor | null>(null);
+  const audioGraphRef = useRef<AudioGraphEngine | null>(null);
   const mediaElementsRef = useRef<Map<string, HTMLVideoElement | HTMLImageElement>>(new Map());
+  const mediaSrcSignatureRef = useRef<Map<string, string>>(new Map());
   const maskElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
-  const dragRef = useRef<{ clipId: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const dragRef = useRef<GizmoDragState | null>(null);
+  const activeTextKeyRef = useRef<string>('');
 
   const project = useEditorStore((s) => s.project);
+  const nestedScopeId = useEditorStore((s) => s.nestedScopeId);
   const playheadUs = useEditorStore((s) => s.playheadUs);
   const isPlaying = useEditorStore((s) => s.isPlaying);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const showSafeZones = useEditorStore((s) => s.showSafeZones);
+  const showScopes = useEditorStore((s) => s.showScopes);
+  const cropMode = useEditorStore((s) => s.cropMode);
+  const eyedropperActive = useEditorStore((s) => s.eyedropperActive);
   const loadedLuts = useEditorStore((s) => s.loadedLuts);
   const ambientGlowColor = useEditorStore((s) => s.ambientGlowColor);
 
@@ -49,66 +100,106 @@ export const PlayerViewport: React.FC = () => {
   const setIsPlaying = useEditorStore((s) => s.setIsPlaying);
   const setSelectedClipId = useEditorStore((s) => s.setSelectedClipId);
   const setShowSafeZones = useEditorStore((s) => s.setShowSafeZones);
+  const setShowScopes = useEditorStore((s) => s.setShowScopes);
+  const setCropMode = useEditorStore((s) => s.setCropMode);
+  const setEyedropperActive = useEditorStore((s) => s.setEyedropperActive);
   const setAmbientGlowColor = useEditorStore((s) => s.setAmbientGlowColor);
   const splitClipAtPlayhead = useEditorStore((s) => s.splitClipAtPlayhead);
   const deleteSelectedClip = useEditorStore((s) => s.deleteSelectedClip);
+  const previewSelectedClip = useEditorStore((s) => s.previewSelectedClip);
+  const commitCurrentProject = useEditorStore((s) => s.commitCurrentProject);
   const updateSelectedClip = useEditorStore((s) => s.updateSelectedClip);
   const toggleColoristMode = useEditorStore((s) => s.toggleColoristMode);
+  const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
 
-  const [renderMs, setRenderMs] = useState(0);
+  const [snapAxes, setSnapAxes] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
+  const [visibleTextClipIds, setVisibleTextClipIds] = useState<string[]>([]);
 
-  // Initialize WebGL2 Compositor
+  // Initialize WebGL2 Compositor + WebAudio Graph + dispose on unmount
   useEffect(() => {
     if (!canvasRef.current) return;
-    compositorRef.current = new WebGLCompositor(canvasRef.current);
+    const comp = new WebGLCompositor(canvasRef.current);
+    const ag = new AudioGraphEngine();
+    compositorRef.current = comp;
+    audioGraphRef.current = ag;
     return () => {
+      comp.dispose();
+      ag.dispose();
       compositorRef.current = null;
+      audioGraphRef.current = null;
+      mediaElementsRef.current.forEach((el) => {
+        if (el instanceof HTMLVideoElement) {
+          el.pause();
+          el.removeAttribute('src');
+          el.load();
+        }
+      });
+      mediaElementsRef.current.clear();
+      maskElementsRef.current.forEach((m) => {
+        m.pause();
+        m.removeAttribute('src');
+        m.load();
+      });
+      maskElementsRef.current.clear();
     };
   }, []);
 
-  // Upload newly registered 3D LUTs
+  // Upload registered 3D LUTs
   useEffect(() => {
     const comp = compositorRef.current;
     if (!comp) return;
     Object.values(loadedLuts).forEach((lut) => comp.uploadLut(lut));
   }, [loadedLuts]);
 
-  // Synchronize HTML media elements with Project assets
+  // Synchronize Clip-Keyed HTML Media Pool with effective flattened clips (fixes same-assetId PiP/split bug + Compound clips)
   useEffect(() => {
     if (!project) return;
+    const flatClips = resolveEffectiveClips(project, nestedScopeId);
     const map = mediaElementsRef.current;
+    const sigMap = mediaSrcSignatureRef.current;
     const maskMap = maskElementsRef.current;
+    const validIds = new Set<string>();
 
-    for (const asset of Object.values(project.assets)) {
-      const targetPath =
-        project.settings.proxyEnabled && asset.proxyPath ? asset.proxyPath : asset.sourcePath;
-      const streamSrc = mediaStreamUrl(targetPath);
+    for (const clip of flatClips) {
+      if (!clip.assetId || (clip.kind !== 'video' && clip.kind !== 'image' && clip.kind !== 'audio')) continue;
+      const asset = project.assets[clip.assetId];
+      if (!asset) continue;
+      validIds.add(clip.id);
+
+      const useProxy = project.settings.proxyEnabled && asset.proxyPath;
+      const streamSrc = assetMediaUrl(asset.id, useProxy ? 'proxy' : 'source');
 
       if (asset.kind === 'image') {
-        let img = map.get(asset.id) as HTMLImageElement | undefined;
+        let img = map.get(clip.id) as HTMLImageElement | undefined;
         if (!img || !(img instanceof HTMLImageElement)) {
           img = new Image();
           img.crossOrigin = 'anonymous';
           img.src = streamSrc;
-          map.set(asset.id, img);
+          map.set(clip.id, img);
+          sigMap.set(clip.id, streamSrc);
+        } else if (sigMap.get(clip.id) !== streamSrc) {
+          img.src = streamSrc;
+          sigMap.set(clip.id, streamSrc);
         }
       } else {
-        let vid = map.get(asset.id) as HTMLVideoElement | undefined;
+        let vid = map.get(clip.id) as HTMLVideoElement | undefined;
         if (!vid || !(vid instanceof HTMLVideoElement)) {
           vid = document.createElement('video');
           vid.crossOrigin = 'anonymous';
           vid.preload = 'auto';
           vid.playsInline = true;
           vid.src = streamSrc;
-          map.set(asset.id, vid);
-        } else if (!vid.src.endsWith(encodeURIComponent(targetPath))) {
+          map.set(clip.id, vid);
+          sigMap.set(clip.id, streamSrc);
+        } else if (sigMap.get(clip.id) !== streamSrc) {
           vid.src = streamSrc;
+          sigMap.set(clip.id, streamSrc);
         }
       }
 
-      if (asset.mattingMaskPath) {
-        let mVid = maskMap.get(asset.id);
-        const mSrc = mediaStreamUrl(asset.mattingMaskPath);
+      if (asset.mattingMaskPath && clip.aiMattingEnabled) {
+        let mVid = maskMap.get(clip.id);
+        const mSrc = assetMediaUrl(asset.id, 'mask');
         if (!mVid) {
           mVid = document.createElement('video');
           mVid.crossOrigin = 'anonymous';
@@ -116,47 +207,123 @@ export const PlayerViewport: React.FC = () => {
           mVid.muted = true;
           mVid.playsInline = true;
           mVid.src = mSrc;
-          maskMap.set(asset.id, mVid);
+          maskMap.set(clip.id, mVid);
         }
       }
     }
-  }, [project]);
 
-  // Playback Clock & Frame Render Loop
+    // Prune stale pool entries when clips are deleted
+    for (const oldId of Array.from(map.keys())) {
+      if (!validIds.has(oldId)) {
+        const el = map.get(oldId);
+        if (el instanceof HTMLVideoElement) {
+          el.pause();
+          el.removeAttribute('src');
+          el.load();
+        }
+        map.delete(oldId);
+        sigMap.delete(oldId);
+      }
+    }
+    for (const oldMaskId of Array.from(maskMap.keys())) {
+      if (!validIds.has(oldMaskId)) {
+        const m = maskMap.get(oldMaskId);
+        m?.pause();
+        m?.removeAttribute('src');
+        maskMap.delete(oldMaskId);
+      }
+    }
+  }, [project, nestedScopeId]);
+
+  // Wake WebAudio on play toggle
+  useEffect(() => {
+    if (isPlaying) {
+      audioGraphRef.current?.ensureReady();
+    }
+  }, [isPlaying]);
+
+  // Zero-ReRender 120Hz Playback Clock & Frame Render Loop
   useEffect(() => {
     if (!project) return;
     let rafId = 0;
     let lastTs = performance.now();
-    let glowTick = 0;
+    let lastRenderKey = '';
+    let lastMsTextUpdate = 0;
 
+    const flatClips = resolveEffectiveClips(project, nestedScopeId);
     const totalDurationUs = Math.max(
       5 * US_PER_SEC,
-      Object.values(project.clips).reduce((m, c) => Math.max(m, c.timelineStartUs + c.durationUs), 0)
+      flatClips.reduce((m, c) => Math.max(m, c.timelineStartUs + c.durationUs), 0)
     );
 
     const tick = (now: number) => {
-      const dtMs = now - lastTs;
+      const dtMs = Math.min(80, Math.max(0, now - lastTs));
       lastTs = now;
-      let curUs = useEditorStore.getState().playheadUs;
 
-      if (useEditorStore.getState().isPlaying) {
-        curUs += Math.round(dtMs * 1000);
-        if (curUs >= totalDurationUs) {
+      let curUs = playbackClock.getTimeUs();
+      const playing = playbackClock.isPlaying();
+      const shuttle = playbackClock.getShuttleRate();
+
+      if (playing) {
+        curUs += Math.round(dtMs * 1000 * shuttle);
+        const inPt = project.inPointUs;
+        const outPt = project.outPointUs;
+        if (inPt != null && outPt != null && outPt > inPt + 100_000) {
+          if (curUs >= outPt) curUs = inPt;
+          else if (curUs < inPt) curUs = outPt - 50_000;
+        } else if (curUs >= totalDurationUs) {
           curUs = 0;
+          playbackClock.setPlaying(false);
+          setIsPlaying(false);
+        } else if (curUs < 0) {
+          curUs = 0;
+          playbackClock.setPlaying(false);
           setIsPlaying(false);
         }
-        setPlayheadUs(curUs);
+        playbackClock.setTimeUs(curUs);
       }
 
-      // Sync active video/audio media elements
-      const activeClips = Object.values(project.clips).filter(
-        (c) => !c.disabled && c.assetId && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs
-      );
-      const activeAssetIds = new Set(activeClips.map((c) => c.assetId!));
+      // Direct DOM timecode & shuttle badge update (0 React re-render)
+      if (timecodeRef.current) {
+        timecodeRef.current.textContent = formatTimecode(curUs);
+      }
+      if (shuttleBadgeRef.current) {
+        shuttleBadgeRef.current.textContent = playing && shuttle !== 1 ? `${shuttle}x` : '';
+      }
 
-      mediaElementsRef.current.forEach((el, assetId) => {
+      // Update visible text clip list ONLY when entering/exiting text boundaries,
+      // and update karaoke word highlights directly on DOM nodes at 120Hz!
+      const nowTextClips = flatClips.filter(
+        (c) => c.kind === 'text' && c.text && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs
+      );
+      const nextTextKey = nowTextClips.map((c) => c.id).join('|');
+      if (nextTextKey !== activeTextKeyRef.current) {
+        activeTextKeyRef.current = nextTextKey;
+        setVisibleTextClipIds(nowTextClips.map((c) => c.id));
+      }
+      if (textOverlayContainerRef.current) {
+        const wordEls = textOverlayContainerRef.current.querySelectorAll<HTMLElement>('[data-wstart]');
+        wordEls.forEach((span) => {
+          const ws = Number(span.dataset.wstart);
+          const we = Number(span.dataset.wend);
+          const activeCol = span.dataset.wactive || '#FFD60A';
+          const baseCol = span.dataset.wbase || '#FFFFFF';
+          const isActive = curUs >= ws && curUs <= we;
+          span.style.color = isActive ? activeCol : baseCol;
+          span.style.transform = isActive ? 'scale(1.12)' : 'scale(1)';
+        });
+      }
+
+      // Active media & audio synchronization per clip.id
+      const activeClips = flatClips.filter(
+        (c) => c.assetId && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs
+      );
+      const activeMap = new Map(activeClips.map((c) => [c.id, c]));
+      const anyVoiceActive = activeClips.some((c) => c.kind === 'video' && !c.audio.autoDucking && isClipAudioAudible(c, project));
+
+      mediaElementsRef.current.forEach((el, clipId) => {
         if (!(el instanceof HTMLVideoElement)) return;
-        const clip = activeClips.find((c) => c.assetId === assetId);
+        const clip = activeMap.get(clipId);
         if (!clip) {
           if (!el.paused) el.pause();
           return;
@@ -164,11 +331,19 @@ export const PlayerViewport: React.FC = () => {
         const track = project.tracks.find((t) => t.id === clip.trackId);
         const localUs = curUs - clip.timelineStartUs;
         const targetSec = mapLocalTimelineToSourceUs(clip, localUs) / US_PER_SEC;
-        el.playbackRate = Math.min(4, Math.max(0.25, clip.speed.rate || 1));
-        el.muted = Boolean(clip.audio.muted || track?.muted);
-        el.volume = Math.min(1, Math.max(0, clip.audio.volume * (track?.volume ?? 1)));
+        const audible = isClipAudioAudible(clip, project);
 
-        if (useEditorStore.getState().isPlaying && !clip.speed.reverse) {
+        el.playbackRate = Math.min(4, Math.max(0.25, (clip.speed.rate || 1) * Math.abs(shuttle)));
+        audioGraphRef.current?.attachAndSyncClip(
+          el,
+          clip,
+          localUs,
+          audible,
+          track?.volume ?? 1,
+          anyVoiceActive
+        );
+
+        if (playing && shuttle > 0 && !clip.speed.reverse) {
           if (el.paused) {
             el.currentTime = targetSec;
             void el.play().catch(() => {});
@@ -182,26 +357,38 @@ export const PlayerViewport: React.FC = () => {
           }
         }
 
-        const maskVid = maskElementsRef.current.get(assetId);
+        const maskVid = maskElementsRef.current.get(clipId);
         if (maskVid && clip.aiMattingEnabled && Math.abs(maskVid.currentTime - targetSec) > 0.05) {
           maskVid.currentTime = targetSec;
         }
       });
 
-      // Pause inactive masks
-      maskElementsRef.current.forEach((mVid, aid) => {
-        if (!activeAssetIds.has(aid) && !mVid.paused) mVid.pause();
+      maskElementsRef.current.forEach((mVid, cid) => {
+        if (!activeMap.has(cid) && !mVid.paused) mVid.pause();
       });
 
+      // Dirty-frame check: skip GPU pass if paused and project+playhead+media unchanged
       const comp = compositorRef.current;
-      if (comp) {
+      const renderKey = `${project.updatedAt}:${curUs}:${nestedScopeId ?? ''}:${JSON.stringify(project.clips).length}`;
+      if (comp && (playing || renderKey !== lastRenderKey || activeClips.some((c) => c.kind === 'video'))) {
+        lastRenderKey = renderKey;
         const tStart = performance.now();
-        const glow = comp.renderFrame(project, curUs, mediaElementsRef.current, maskElementsRef.current);
-        setRenderMs(Math.round((performance.now() - tStart) * 10) / 10);
-        glowTick++;
-        if (glow && glowTick % 8 === 0) {
+        const glow = comp.renderFrame(project, curUs, mediaElementsRef.current, maskElementsRef.current, { nestedScopeId });
+        const costMs = Math.round((performance.now() - tStart) * 10) / 10;
+        if (renderMsRef.current && now - lastMsTextUpdate > 140) {
+          lastMsTextUpdate = now;
+          renderMsRef.current.textContent = `GPU ${costMs}ms`;
+        }
+        if (glow && glow !== ambientGlowColor) {
           setAmbientGlowColor(glow);
         }
+      }
+
+      // Live Stereo VU Meter DOM update
+      if (audioGraphRef.current && vuLeftRef.current && vuRightRef.current) {
+        const lv = playing ? audioGraphRef.current.getStereoLevels() : { leftNorm: 0, rightNorm: 0 };
+        vuLeftRef.current.style.width = `${Math.round(lv.leftNorm * 100)}%`;
+        vuRightRef.current.style.width = `${Math.round(lv.rightNorm * 100)}%`;
       }
 
       rafId = requestAnimationFrame(tick);
@@ -209,46 +396,53 @@ export const PlayerViewport: React.FC = () => {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [project, setIsPlaying, setPlayheadUs, setAmbientGlowColor]);
+  }, [project, nestedScopeId, setIsPlaying, setAmbientGlowColor, ambientGlowColor]);
 
-  const activeTextClips: Clip[] = project
-    ? Object.values(project.clips).filter(
-        (c) =>
-          !c.disabled &&
-          c.kind === 'text' &&
-          c.text &&
-          playheadUs >= c.timelineStartUs &&
-          playheadUs < c.timelineStartUs + c.durationUs
-      )
-    : [];
-
+  const effectiveClips = project ? resolveEffectiveClips(project, nestedScopeId) : [];
   const totalDurationUs = project
     ? Math.max(
         5 * US_PER_SEC,
-        Object.values(project.clips).reduce((m, c) => Math.max(m, c.timelineStartUs + c.durationUs), 0)
+        effectiveClips.reduce((m, c) => Math.max(m, c.timelineStartUs + c.durationUs), 0)
       )
     : 5 * US_PER_SEC;
 
+  const activeTextClips: Clip[] = effectiveClips.filter((c) => c.kind === 'text' && c.text && visibleTextClipIds.includes(c.id));
   const selectedClip = project && selectedClipId ? project.clips[selectedClipId] : null;
   const aspectRatioCss = project ? `${project.settings.width} / ${project.settings.height}` : '16 / 9';
 
-  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handleStagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!project) return;
+    const curUs = playbackClock.getTimeUs();
+
+    if (eyedropperActive && selectedClip && compositorRef.current && stageRef.current) {
+      const rect = stageRef.current.getBoundingClientRect();
+      const nx = (e.clientX - rect.left) / Math.max(1, rect.width);
+      const ny = (e.clientY - rect.top) / Math.max(1, rect.height);
+      const pickedHex = compositorRef.current.samplePixelHex(nx, ny);
+      setEyedropperActive(false);
+      void updateSelectedClip(`Chroma Eyedropper ${pickedHex}`, (c) => {
+        c.chromaKey.enabled = true;
+        c.chromaKey.colorHex = pickedHex;
+      });
+      setStatusMessage(`Đã hút màu Chroma Key: ${pickedHex}`);
+      return;
+    }
+
     const hit =
-      selectedClip &&
-      playheadUs >= selectedClip.timelineStartUs &&
-      playheadUs < selectedClip.timelineStartUs + selectedClip.durationUs
+      selectedClip && curUs >= selectedClip.timelineStartUs && curUs < selectedClip.timelineStartUs + selectedClip.durationUs
         ? selectedClip
         : Object.values(project.clips).find(
             (c) =>
               !c.disabled &&
-              (c.kind === 'video' || c.kind === 'image' || c.kind === 'text') &&
-              playheadUs >= c.timelineStartUs &&
-              playheadUs < c.timelineStartUs + c.durationUs
+              (c.kind === 'video' || c.kind === 'image' || c.kind === 'text' || c.kind === 'compound') &&
+              curUs >= c.timelineStartUs &&
+              curUs < c.timelineStartUs + c.durationUs
           );
     if (!hit) return;
     setSelectedClipId(hit.id);
+    e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = {
+      kind: 'move',
       clipId: hit.id,
       startX: e.clientX,
       startY: e.clientY,
@@ -257,38 +451,100 @@ export const PlayerViewport: React.FC = () => {
     };
   };
 
-  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag || !project) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const dx = ((e.clientX - drag.startX) / Math.max(1, rect.width)) * 2;
-    const dy = ((e.clientY - drag.startY) / Math.max(1, rect.height)) * 2;
-    const nextX = Math.abs(drag.origX + dx) < 0.03 ? 0 : Number((drag.origX + dx).toFixed(3));
-    const nextY = Math.abs(drag.origY + dy) < 0.03 ? 0 : Number((drag.origY + dy).toFixed(3));
-    const clip = project.clips[drag.clipId];
-    if (clip) {
-      clip.transform.x = nextX;
-      clip.transform.y = nextY;
-    }
+  const handleCornerScalePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!selectedClip || !stageRef.current) return;
+    e.stopPropagation();
+    stageRef.current.setPointerCapture(e.pointerId);
+    const rect = stageRef.current.getBoundingClientRect();
+    const cx = rect.left + (0.5 + selectedClip.transform.x * 0.5) * rect.width;
+    const cy = rect.top + (0.5 + selectedClip.transform.y * 0.5) * rect.height;
+    const dist = Math.max(12, Math.hypot(e.clientX - cx, e.clientY - cy));
+    dragRef.current = {
+      kind: 'scale',
+      clipId: selectedClip.id,
+      centerClientX: cx,
+      centerClientY: cy,
+      startDist: dist,
+      origScaleX: selectedClip.transform.scaleX,
+      origScaleY: selectedClip.transform.scaleY,
+    };
   };
 
-  const handleCanvasPointerUp = () => {
+  const handleRotatePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!selectedClip || !stageRef.current) return;
+    e.stopPropagation();
+    stageRef.current.setPointerCapture(e.pointerId);
+    const rect = stageRef.current.getBoundingClientRect();
+    const cx = rect.left + (0.5 + selectedClip.transform.x * 0.5) * rect.width;
+    const cy = rect.top + (0.5 + selectedClip.transform.y * 0.5) * rect.height;
+    const ang = Math.atan2(e.clientY - cy, e.clientX - cx);
+    dragRef.current = {
+      kind: 'rotate',
+      clipId: selectedClip.id,
+      centerClientX: cx,
+      centerClientY: cy,
+      startAngle: ang,
+      origRotation: selectedClip.transform.rotation,
+    };
+  };
+
+  const handleStagePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag || !project) return;
-    dragRef.current = null;
-    const clip = project.clips[drag.clipId];
-    if (clip) {
-      const fx = clip.transform.x;
-      const fy = clip.transform.y;
-      void updateSelectedClip('Di chuyển vị trí trên Viewport', (c) => {
-        c.transform.x = fx;
-        c.transform.y = fy;
+
+    if (drag.kind === 'move') {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const dx = ((e.clientX - drag.startX) / Math.max(1, rect.width)) * 2;
+      const dy = ((e.clientY - drag.startY) / Math.max(1, rect.height)) * 2;
+      const snapX = Math.abs(drag.origX + dx) < 0.035;
+      const snapY = Math.abs(drag.origY + dy) < 0.035;
+      setSnapAxes({ x: snapX, y: snapY });
+      const nextX = snapX ? 0 : Number((drag.origX + dx).toFixed(3));
+      const nextY = snapY ? 0 : Number((drag.origY + dy).toFixed(3));
+      previewSelectedClip((c) => {
+        c.transform.x = nextX;
+        c.transform.y = nextY;
+      });
+    } else if (drag.kind === 'scale') {
+      const curDist = Math.max(10, Math.hypot(e.clientX - drag.centerClientX, e.clientY - drag.centerClientY));
+      const ratio = curDist / drag.startDist;
+      const sx = Math.min(4, Math.max(0.1, Number((drag.origScaleX * ratio).toFixed(3))));
+      const sy = Math.min(4, Math.max(0.1, Number((drag.origScaleY * ratio).toFixed(3))));
+      previewSelectedClip((c) => {
+        c.transform.scaleX = sx;
+        c.transform.scaleY = sy;
+      });
+    } else if (drag.kind === 'rotate') {
+      const curAng = Math.atan2(e.clientY - drag.centerClientY, e.clientX - drag.centerClientX);
+      const deg = ((curAng - drag.startAngle) * 180) / Math.PI;
+      let nextRot = Math.round(drag.origRotation + deg);
+      if (Math.abs(nextRot % 90) < 4) nextRot = Math.round(nextRot / 90) * 90;
+      previewSelectedClip((c) => {
+        c.transform.rotation = nextRot;
       });
     }
   };
 
+  const handleStagePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    dragRef.current = null;
+    setSnapAxes({ x: false, y: false });
+    void commitCurrentProject(`Viewport Gizmo (${drag.kind})`);
+  };
+
+  const curTimeForGizmo = playbackClock.getTimeUs();
+  const showGizmo =
+    selectedClip &&
+    (selectedClip.kind === 'video' || selectedClip.kind === 'image' || selectedClip.kind === 'compound') &&
+    curTimeForGizmo >= selectedClip.timelineStartUs &&
+    curTimeForGizmo < selectedClip.timelineStartUs + selectedClip.durationUs;
+
   return (
-    <div className="liquid-glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 12, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+    <div className="nle-content-surface" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 12, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
       {/* Ambient Video Glow Halo */}
       {project?.settings.ambientGlow && !project?.settings.coloristMode && (
         <div
@@ -306,37 +562,66 @@ export const PlayerViewport: React.FC = () => {
       )}
 
       {/* Viewport Header Bar */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, zIndex: 2 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
-          <Film size={14} color="#22d3ee" />
-          <span>Player Preview</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, zIndex: 2, gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+          <Film size={13} color="#22d3ee" />
+          <span>Preview</span>
           {project && (
-            <span className="mono" style={{ padding: '2px 7px', borderRadius: 6, background: 'rgba(255,255,255,0.06)', color: '#e2e8f0', fontSize: 11 }}>
+            <span className="mono" style={{ padding: '2px 6px', borderRadius: 6, background: 'rgba(255,255,255,0.06)', color: '#e2e8f0', fontSize: 10.5 }}>
               {project.settings.width}×{project.settings.height} · {project.settings.fps}fps
             </span>
           )}
-          <span className="mono" style={{ fontSize: 11, color: '#34d399' }}>
-            GPU {renderMs}ms
+          <span ref={renderMsRef} className="mono" style={{ fontSize: 10.5, color: '#34d399' }}>
+            GPU 0ms
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button
+            className={`glass-btn ${cropMode ? 'glass-btn-active' : ''}`}
+            style={{ padding: '4px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
+            onClick={() => setCropMode(!cropMode)}
+            title="Chế độ Crop khung hình"
+          >
+            <Crop size={12} /> Crop
+          </button>
+          <button
+            className={`glass-btn ${eyedropperActive ? 'glass-btn-active' : ''}`}
+            style={{ padding: '4px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
+            onClick={() => setEyedropperActive(!eyedropperActive)}
+            disabled={!selectedClip}
+            title="Hút màu Phông Xanh trực tiếp từ Video"
+          >
+            <Pipette size={12} /> Eyedropper
+          </button>
+          <button
+            className={`glass-btn ${showScopes ? 'glass-btn-active' : ''}`}
+            style={{ padding: '4px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
+            onClick={() => setShowScopes(!showScopes)}
+            title="Bật RGB Parade & Luma Waveform Scopes"
+          >
+            <Activity size={12} /> Scopes
+          </button>
           <button
             className={`glass-btn ${showSafeZones ? 'glass-btn-active' : ''}`}
+            style={{ padding: '4px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
             onClick={() => setShowSafeZones(!showSafeZones)}
             title="Khung an toàn TikTok / Reels / YouTube"
           >
-            <Maximize2 size={13} /> Safe Zones
+            <Maximize2 size={12} /> Safe
           </button>
           <button
             className={`glass-btn ${project?.settings.coloristMode ? 'glass-btn-active' : ''}`}
+            style={{ padding: '4px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
             onClick={() => void toggleColoristMode()}
             title="Colorist Mode: Nền xám Rec.709 trung tính khi chỉnh màu"
           >
-            <Eye size={13} /> {project?.settings.coloristMode ? 'Colorist On' : 'Colorist'}
+            <Eye size={12} /> {project?.settings.coloristMode ? 'Colorist On' : 'Colorist'}
           </button>
         </div>
       </div>
+
+      <VideoScopesPanel sourceCanvasRef={canvasRef} />
 
       {/* Centered Aspect-Ratio Canvas Stage */}
       <div
@@ -351,9 +636,10 @@ export const PlayerViewport: React.FC = () => {
         }}
       >
         <div
-          onPointerDown={handleCanvasPointerDown}
-          onPointerMove={handleCanvasPointerMove}
-          onPointerUp={handleCanvasPointerUp}
+          ref={stageRef}
+          onPointerDown={handleStagePointerDown}
+          onPointerMove={handleStagePointerMove}
+          onPointerUp={handleStagePointerUp}
           style={{
             position: 'relative',
             aspectRatio: aspectRatioCss,
@@ -362,98 +648,152 @@ export const PlayerViewport: React.FC = () => {
             height: '100%',
             borderRadius: 12,
             overflow: 'hidden',
-            border: '1px solid rgba(255,255,255,0.18)',
+            border: eyedropperActive ? '2px solid #34d399' : '1px solid rgba(255,255,255,0.18)',
             boxShadow: '0 20px 50px rgba(0,0,0,0.65)',
             background: '#05070b',
-            cursor: 'grab',
+            cursor: eyedropperActive ? 'crosshair' : 'grab',
           }}
         >
           <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
 
-          {/* Text & Word-by-Word Karaoke Overlay Layer */}
-          {activeTextClips.map((tc) => {
-            const t = tc.text!;
-            const localUs = playheadUs - tc.timelineStartUs;
-            const xPct = 50 + getClipPropertyAtTime(tc, 'x', localUs) * 50;
-            const yPct = 50 + getClipPropertyAtTime(tc, 'y', localUs) * 50;
-            const scale = getClipPropertyAtTime(tc, 'scaleX', localUs);
-            const opacity = getClipPropertyAtTime(tc, 'opacity', localUs);
-            const words = t.words && t.words.length > 0 ? t.words : null;
+          {/* Text & 120Hz Direct-DOM Word-by-Word Karaoke Overlay Layer */}
+          <div ref={textOverlayContainerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+            {activeTextClips.map((tc) => {
+              const t = tc.text!;
+              const localUs = curTimeForGizmo - tc.timelineStartUs;
+              const xPct = 50 + getClipPropertyAtTime(tc, 'x', localUs) * 50;
+              const yPct = 50 + getClipPropertyAtTime(tc, 'y', localUs) * 50;
+              const scale = getClipPropertyAtTime(tc, 'scaleX', localUs);
+              const opacity = getClipPropertyAtTime(tc, 'opacity', localUs);
+              const words = t.words && t.words.length > 0 ? t.words : null;
 
-            return (
-              <div
-                key={tc.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelectedClipId(tc.id);
-                }}
-                style={{
-                  position: 'absolute',
-                  left: `${xPct}%`,
-                  top: `${yPct}%`,
-                  transform: `translate(-50%, -50%) scale(${scale})`,
-                  opacity,
-                  maxWidth: '88%',
-                  textAlign: t.align,
-                  fontFamily: t.fontFamily,
-                  fontSize: `${Math.max(14, t.fontSize * 0.42)}px`,
-                  fontWeight: t.fontWeight,
-                  fontStyle: t.italic ? 'italic' : 'normal',
-                  letterSpacing: `${t.letterSpacing}px`,
-                  lineHeight: t.lineHeight,
-                  padding: `${t.backgroundPadding * 0.45}px ${t.backgroundPadding * 0.75}px`,
-                  borderRadius: `${t.backgroundRadius}px`,
-                  background: t.backgroundColor,
-                  textShadow: `0 ${t.shadowOffsetY}px ${t.shadowBlur}px ${t.shadowColor}`,
-                  WebkitTextStroke: t.strokeWidth > 0 ? `${Math.max(0.5, t.strokeWidth * 0.35)}px ${t.strokeColor}` : undefined,
-                  border: selectedClipId === tc.id ? '1.5px dashed #22d3ee' : 'none',
-                  pointerEvents: 'auto',
-                }}
-              >
-                {t.karaokeEnabled && words
-                  ? words.map((w, wi) => {
-                      const active = playheadUs >= w.startUs && playheadUs <= w.endUs;
-                      return (
+              return (
+                <div
+                  key={tc.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedClipId(tc.id);
+                  }}
+                  style={{
+                    position: 'absolute',
+                    left: `${xPct}%`,
+                    top: `${yPct}%`,
+                    transform: `translate(-50%, -50%) scale(${scale})`,
+                    opacity,
+                    maxWidth: '88%',
+                    textAlign: t.align,
+                    fontFamily: t.fontFamily,
+                    fontSize: `${Math.max(14, t.fontSize * 0.42)}px`,
+                    fontWeight: t.fontWeight,
+                    fontStyle: t.italic ? 'italic' : 'normal',
+                    letterSpacing: `${t.letterSpacing}px`,
+                    lineHeight: t.lineHeight,
+                    padding: `${t.backgroundPadding * 0.45}px ${t.backgroundPadding * 0.75}px`,
+                    borderRadius: `${t.backgroundRadius}px`,
+                    background: t.backgroundColor,
+                    textShadow: `0 ${t.shadowOffsetY}px ${t.shadowBlur}px ${t.shadowColor}`,
+                    WebkitTextStroke: t.strokeWidth > 0 ? `${Math.max(0.5, t.strokeWidth * 0.35)}px ${t.strokeColor}` : undefined,
+                    border: selectedClipId === tc.id ? '1.5px dashed #22d3ee' : 'none',
+                    pointerEvents: 'auto',
+                    display: t.karaokeEnabled && words ? 'inline-flex' : 'block',
+                    flexWrap: 'wrap',
+                    justifyContent: 'center',
+                    alignItems: 'baseline',
+                    gap: '0.34em',
+                  }}
+                >
+                  {t.karaokeEnabled && words
+                    ? words.map((w, wi) => (
                         <span
                           key={wi}
+                          data-wstart={w.startUs}
+                          data-wend={w.endUs}
+                          data-wactive={t.karaokeActiveColor}
+                          data-wbase={t.color}
                           style={{
-                            color: active ? t.karaokeActiveColor : t.color,
+                            color: curTimeForGizmo >= w.startUs && curTimeForGizmo <= w.endUs ? t.karaokeActiveColor : t.color,
                             display: 'inline-block',
-                            marginRight: '0.28em',
-                            transform: active ? 'scale(1.12)' : 'scale(1)',
-                            transition: 'transform 90ms ease, color 90ms ease',
+                            transition: 'transform 60ms ease, color 60ms ease',
                           }}
                         >
                           {w.text}
                         </span>
-                      );
-                    })
-                  : <span style={{ color: t.color }}>{t.text}</span>}
-              </div>
-            );
-          })}
+                      ))
+                    : <span style={{ color: t.color }}>{t.text}</span>}
+                </div>
+              );
+            })}
+          </div>
 
-          {/* On-Canvas Gizmo Selection Box */}
-          {selectedClip &&
-            (selectedClip.kind === 'video' || selectedClip.kind === 'image') &&
-            playheadUs >= selectedClip.timelineStartUs &&
-            playheadUs < selectedClip.timelineStartUs + selectedClip.durationUs && (
+          {/* Interactive On-Canvas Gizmo (Corner Scale + Top Rotate Handle + Magnetic Snap Guides) */}
+          {showGizmo && selectedClip && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: '6%',
+                border: '1.5px solid rgba(34, 211, 238, 0.85)',
+                borderRadius: 6,
+                pointerEvents: 'none',
+                transform: `translate(${selectedClip.transform.x * 50}%, ${selectedClip.transform.y * 50}%) scale(${selectedClip.transform.scaleX}, ${selectedClip.transform.scaleY}) rotate(${selectedClip.transform.rotation}deg)`,
+              }}
+            >
+              {/* Top Rotation Handle */}
               <div
+                onPointerDown={handleRotatePointerDown}
+                title="Kéo để xoay clip"
                 style={{
                   position: 'absolute',
-                  inset: '8%',
-                  border: '1.5px solid rgba(34, 211, 238, 0.75)',
-                  borderRadius: 6,
-                  pointerEvents: 'none',
-                  transform: `translate(${selectedClip.transform.x * 50}%, ${selectedClip.transform.y * 50}%) scale(${selectedClip.transform.scaleX}, ${selectedClip.transform.scaleY}) rotate(${selectedClip.transform.rotation}deg)`,
+                  top: -26,
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  background: '#0e1726',
+                  border: '1.5px solid #22d3ee',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'grab',
+                  pointerEvents: 'auto',
                 }}
               >
-                <div style={{ position: 'absolute', top: -4, left: -4, width: 8, height: 8, background: '#22d3ee', borderRadius: 2 }} />
-                <div style={{ position: 'absolute', top: -4, right: -4, width: 8, height: 8, background: '#22d3ee', borderRadius: 2 }} />
-                <div style={{ position: 'absolute', bottom: -4, left: -4, width: 8, height: 8, background: '#22d3ee', borderRadius: 2 }} />
-                <div style={{ position: 'absolute', bottom: -4, right: -4, width: 8, height: 8, background: '#22d3ee', borderRadius: 2 }} />
+                <RotateCw size={11} color="#22d3ee" />
               </div>
-            )}
+              {(
+                [
+                  { top: -5, left: -5, cursor: 'nwse-resize' },
+                  { top: -5, right: -5, cursor: 'nesw-resize' },
+                  { bottom: -5, left: -5, cursor: 'nesw-resize' },
+                  { bottom: -5, right: -5, cursor: 'nwse-resize' },
+                ] as const
+              ).map((pos, idx) => (
+                <div
+                  key={idx}
+                  onPointerDown={handleCornerScalePointerDown}
+                  title="Kéo để thay đổi tỉ lệ (Scale)"
+                  style={{
+                    position: 'absolute',
+                    width: 11,
+                    height: 11,
+                    background: '#22d3ee',
+                    border: '1.5px solid #04121a',
+                    borderRadius: 3,
+                    pointerEvents: 'auto',
+                    ...pos,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Snap Center Flash Guides */}
+          {snapAxes.x && (
+            <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1.5, background: '#22d3ee', pointerEvents: 'none' }} />
+          )}
+          {snapAxes.y && (
+            <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1.5, background: '#22d3ee', pointerEvents: 'none' }} />
+          )}
 
           {/* TikTok / Reels / Broadcast Safe Zone Guides */}
           {showSafeZones && (
@@ -464,7 +804,7 @@ export const PlayerViewport: React.FC = () => {
             </div>
           )}
 
-          {/* Empty State Onboarding inside Preview */}
+          {/* Empty State */}
           {project && Object.keys(project.clips).length === 0 && (
             <div
               style={{
@@ -480,18 +820,19 @@ export const PlayerViewport: React.FC = () => {
               }}
             >
               <Sparkles size={26} color="#22d3ee" />
-              <div>Nhập video/ảnh ở cột Media hoặc bấm <strong>Tạo Video Mẫu 1-Click</strong></div>
+              <div>Nhập video/ảnh ở cột Media hoặc bấm <strong>Video Mẫu</strong></div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Floating Refractive Liquid Glass Transport Capsule */}
+      {/* Floating Refractive Liquid Glass Transport Capsule + Stereo VU Meter */}
       <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10, zIndex: 2 }}>
         <div className="liquid-glass-pill" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 14px' }}>
-          <span className="mono" style={{ fontSize: 12, color: '#22d3ee', minWidth: 88 }}>
+          <span ref={timecodeRef} className="mono" style={{ fontSize: 12, color: '#22d3ee', minWidth: 88 }}>
             {formatTimecode(playheadUs)}
           </span>
+          <span ref={shuttleBadgeRef} className="mono" style={{ fontSize: 10.5, color: '#fbbf24', minWidth: 18 }} />
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
             / {formatTimecode(totalDurationUs)}
           </span>
@@ -505,13 +846,31 @@ export const PlayerViewport: React.FC = () => {
             className="glass-btn glass-btn-primary"
             style={{ width: 34, height: 30, borderRadius: 999, padding: 0 }}
             onClick={() => setIsPlaying(!isPlaying)}
-            title="Phát / Tạm dừng (Space)"
+            title="Phát / Tạm dừng (Space hoặc J/K/L)"
           >
             {isPlaying ? <Pause size={15} /> : <Play size={15} />}
           </button>
           <button className="glass-btn" onClick={() => setPlayheadUs(totalDurationUs)} title="Đến cuối (End)">
             <SkipForward size={13} />
           </button>
+
+          <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.14)' }} />
+
+          {/* Stereo L/R dBFS Meter */}
+          <div title="Master Audio Stereo VU Meter (L/R)" style={{ width: 52, display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div style={{ height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden' }}>
+              <div
+                ref={vuLeftRef}
+                style={{ width: '0%', height: '100%', background: 'linear-gradient(90deg, #34d399, #fbbf24 80%, #fb7185)', transition: 'width 40ms linear' }}
+              />
+            </div>
+            <div style={{ height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden' }}>
+              <div
+                ref={vuRightRef}
+                style={{ width: '0%', height: '100%', background: 'linear-gradient(90deg, #34d399, #fbbf24 80%, #fb7185)', transition: 'width 40ms linear' }}
+              />
+            </div>
+          </div>
 
           <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.14)' }} />
 

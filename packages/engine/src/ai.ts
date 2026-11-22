@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { US_PER_SEC, type MediaAsset, type TranscriptSegment } from '@t-capcut/schema';
 
 const execFileAsync = promisify(execFile);
+const EXEC_OPTS = { maxBuffer: 64 * 1024 * 1024 };
 
 export interface SilenceInterval {
   startUs: number;
@@ -30,19 +31,31 @@ export interface FaceTrackResult {
 export interface AiCapabilities {
   visionBinaryPath: string | null;
   visionAvailable: boolean;
+  appleSpeechAvailable: boolean;
   whisperCliPath: string | null;
   whisperModelPath: string | null;
   parakeetCliPath: string | null;
+  rnnoiseModelPath: string | null;
+  ffmpegPath: string | null;
+  ffprobePath: string | null;
+  nodePath: string;
   ffmpegFilters: {
     silencedetect: boolean;
     scdet: boolean;
     loudnorm: boolean;
     afftdn: boolean;
+    arnndn: boolean;
   };
 }
 
 function findExecutable(name: string): string | null {
-  const candidates = [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, `/usr/bin/${name}`];
+  const pathEnv = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  const candidates = [
+    ...pathEnv.map((dir) => path.join(dir, name)),
+    `/opt/homebrew/bin/${name}`,
+    `/usr/local/bin/${name}`,
+    `/usr/bin/${name}`,
+  ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
@@ -64,6 +77,15 @@ export function findWhisperModel(modelsDir: string): string | null {
   return null;
 }
 
+export function findRnnoiseModel(modelsDir: string): string | null {
+  const candidates = [
+    path.join(modelsDir, 'rnnoise.rnnn'),
+    path.join(modelsDir, 'sh.rnnn'),
+    '/opt/homebrew/share/rnnoise/sh.rnnn',
+  ];
+  return candidates.find((c) => fs.existsSync(c)) ?? null;
+}
+
 export function getAiCapabilities(projectRoot: string, modelsDir: string): AiCapabilities {
   const candidates = [
     process.env.TCAPCUT_VISION_BIN,
@@ -74,14 +96,20 @@ export function getAiCapabilities(projectRoot: string, modelsDir: string): AiCap
   return {
     visionBinaryPath: visionPath,
     visionAvailable: Boolean(visionPath),
+    appleSpeechAvailable: Boolean(visionPath),
     whisperCliPath: findExecutable('whisper-cli'),
     whisperModelPath: findWhisperModel(modelsDir),
     parakeetCliPath: findExecutable('parakeet-cli'),
+    rnnoiseModelPath: findRnnoiseModel(modelsDir),
+    ffmpegPath: findExecutable('ffmpeg'),
+    ffprobePath: findExecutable('ffprobe'),
+    nodePath: process.execPath,
     ffmpegFilters: {
       silencedetect: true,
       scdet: true,
       loudnorm: true,
       afftdn: true,
+      arnndn: true,
     },
   };
 }
@@ -94,16 +122,20 @@ export async function detectSilence(
   noiseDb = -34,
   minDurationSec = 0.45
 ): Promise<SilenceInterval[]> {
-  const { stderr } = await execFileAsync('ffmpeg', [
-    '-hide_banner',
-    '-i',
-    filePath,
-    '-af',
-    `silencedetect=noise=${noiseDb}dB:d=${minDurationSec}`,
-    '-f',
-    'null',
-    '-',
-  ]);
+  const { stderr } = await execFileAsync(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-i',
+      filePath,
+      '-af',
+      `silencedetect=noise=${noiseDb}dB:d=${minDurationSec}`,
+      '-f',
+      'null',
+      '-',
+    ],
+    EXEC_OPTS
+  );
 
   const intervals: SilenceInterval[] = [];
   let pendingStartSec: number | null = null;
@@ -135,17 +167,11 @@ export async function detectSilence(
  * Detect scene cut timestamps using FFmpeg scdet filter.
  */
 export async function detectScenes(filePath: string, threshold = 14): Promise<number[]> {
-  const { stderr } = await execFileAsync('ffmpeg', [
-    '-hide_banner',
-    '-i',
-    filePath,
-    '-vf',
-    `scdet=threshold=${threshold}`,
-    '-an',
-    '-f',
-    'null',
-    '-',
-  ]);
+  const { stderr } = await execFileAsync(
+    'ffmpeg',
+    ['-hide_banner', '-i', filePath, '-vf', `scdet=threshold=${threshold}`, '-an', '-f', 'null', '-'],
+    EXEC_OPTS
+  );
 
   const scenesUs: number[] = [];
   for (const line of stderr.split(/\r?\n/)) {
@@ -169,23 +195,15 @@ export async function detectBeats(filePath: string, tempDir: string): Promise<nu
   const sampleRate = 16000;
 
   try {
-    await execFileAsync('ffmpeg', [
-      '-y',
-      '-i',
-      filePath,
-      '-vn',
-      '-ac',
-      '1',
-      '-ar',
-      String(sampleRate),
-      '-f',
-      'f32le',
-      pcmPath,
-    ]);
+    await execFileAsync(
+      'ffmpeg',
+      ['-y', '-i', filePath, '-vn', '-ac', '1', '-ar', String(sampleRate), '-f', 'f32le', pcmPath],
+      EXEC_OPTS
+    );
 
     const buf = fs.readFileSync(pcmPath);
     const floats = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
-    const hop = 320; // 20ms per window
+    const hop = 320;
     const energies: number[] = [];
 
     for (let i = 0; i + hop <= floats.length; i += hop) {
@@ -197,9 +215,8 @@ export async function detectBeats(filePath: string, tempDir: string): Promise<nu
       energies.push(Math.sqrt(sumSq / hop));
     }
 
-    // Spectral-flux-like positive energy delta over local moving average
     const beatsUs: number[] = [];
-    const winRadius = 12; // ~240ms neighborhood
+    const winRadius = 12;
     let lastBeatUs = -500_000;
 
     for (let idx = winRadius; idx < energies.length - winRadius; idx++) {
@@ -227,47 +244,37 @@ export async function detectBeats(filePath: string, tempDir: string): Promise<nu
 }
 
 /**
- * Transcribe audio with local whisper-cli + GGML model if available; otherwise generate speech-activity segments
- * using FFmpeg silence segmentation so transcript editing & karaoke captions always work offline.
+ * Multi-tier local ASR cascade:
+ * 1. whisper-cli + GGML model (offline multilingual + Vietnamese/English word timestamps)
+ * 2. parakeet-cli (NVIDIA Parakeet local CLI if installed)
+ * 3. Apple Native SFSpeechRecognizer via tcapcut-vision (zero-download on macOS when authorized)
+ * 4. Honest FFmpeg VAD speech-activity spans (never fabricates fake dialogue)
  */
 export async function transcribeMedia(
   asset: MediaAsset,
   tempDir: string,
   modelsDir: string,
-  language = 'vi'
-): Promise<{ engine: 'whisper-cli' | 'vad-fallback'; segments: TranscriptSegment[] }> {
+  language = 'vi',
+  visionBinPath?: string | null
+): Promise<{ engine: 'whisper-cli' | 'parakeet-cli' | 'apple-speech' | 'vad-fallback'; segments: TranscriptSegment[] }> {
   const whisperCli = findExecutable('whisper-cli');
   const modelPath = findWhisperModel(modelsDir);
 
-  if (whisperCli && modelPath) {
+  if (whisperCli && modelPath && asset.hasAudio) {
     fs.mkdirSync(tempDir, { recursive: true });
     const wavPath = path.join(tempDir, `${asset.id}_16k.wav`);
     const jsonPrefix = path.join(tempDir, `${asset.id}_whisper`);
     try {
-      await execFileAsync('ffmpeg', [
-        '-y',
-        '-i',
-        asset.sourcePath,
-        '-vn',
-        '-ar',
-        '16000',
-        '-ac',
-        '1',
-        '-c:a',
-        'pcm_s16le',
-        wavPath,
-      ]);
-      await execFileAsync(whisperCli, [
-        '-m',
-        modelPath,
-        '-f',
-        wavPath,
-        '-l',
-        language,
-        '-ojf',
-        '-of',
-        jsonPrefix,
-      ]);
+      await execFileAsync(
+        'ffmpeg',
+        ['-y', '-i', asset.sourcePath, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath],
+        EXEC_OPTS
+      );
+      await execFileAsync(
+        whisperCli,
+        ['-m', modelPath, '-f', wavPath, '-l', language, '-ojf', '-of', jsonPrefix],
+        EXEC_OPTS
+      );
 
       const outJson = `${jsonPrefix}.json`;
       if (fs.existsSync(outJson)) {
@@ -315,7 +322,7 @@ export async function transcribeMedia(
             };
           });
 
-        return { engine: 'whisper-cli', segments };
+        if (segments.length > 0) return { engine: 'whisper-cli', segments };
       }
     } finally {
       if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
@@ -323,7 +330,56 @@ export async function transcribeMedia(
     }
   }
 
-  // Fallback: compute active speech regions as complement of silence intervals
+  // Tier 2: parakeet-cli if installed
+  const parakeetCli = findExecutable('parakeet-cli');
+  if (parakeetCli && asset.hasAudio) {
+    fs.mkdirSync(tempDir, { recursive: true });
+    const wavPath = path.join(tempDir, `${asset.id}_pk.wav`);
+    const pkOut = path.join(tempDir, `${asset.id}_parakeet.json`);
+    try {
+      await execFileAsync(
+        'ffmpeg',
+        ['-y', '-i', asset.sourcePath, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath],
+        EXEC_OPTS
+      );
+      await execFileAsync(parakeetCli, [wavPath, '--json', pkOut], EXEC_OPTS);
+      if (fs.existsSync(pkOut)) {
+        const parsed = JSON.parse(fs.readFileSync(pkOut, 'utf8')) as {
+          text?: string;
+          segments?: TranscriptSegment[];
+        };
+        if (parsed.segments && parsed.segments.length > 0) {
+          return { engine: 'parakeet-cli', segments: parsed.segments };
+        }
+      }
+    } catch {
+      // Fall through cleanly to Apple Speech / VAD
+    } finally {
+      if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
+      if (fs.existsSync(pkOut)) fs.unlinkSync(pkOut);
+    }
+  }
+
+  // Tier 3: Apple Native SFSpeechRecognizer via tcapcut-vision
+  if (visionBinPath && fs.existsSync(visionBinPath) && asset.hasAudio) {
+    fs.mkdirSync(tempDir, { recursive: true });
+    const outJson = path.join(tempDir, `${asset.id}_sf_speech.json`);
+    try {
+      await execFileAsync(visionBinPath, ['transcribe-speech', asset.sourcePath, language, outJson], EXEC_OPTS);
+      if (fs.existsSync(outJson)) {
+        const report = JSON.parse(fs.readFileSync(outJson, 'utf8')) as { segments?: TranscriptSegment[] };
+        if (report.segments && report.segments.length > 0) {
+          return { engine: 'apple-speech', segments: report.segments };
+        }
+      }
+    } catch {
+      // Non-fatal if TCC Speech authorization unavailable in headless CLI
+    } finally {
+      if (fs.existsSync(outJson)) fs.unlinkSync(outJson);
+    }
+  }
+
+  // Tier 4: Honest speech-activity spans via FFmpeg VAD (no fabricated marketing copy)
   const silences = asset.hasAudio ? await detectSilence(asset.sourcePath, -35, 0.35) : [];
   const speechSpans: Array<{ startUs: number; endUs: number }> = [];
   let cursor = 0;
@@ -341,33 +397,20 @@ export async function transcribeMedia(
     speechSpans.push({ startUs: 0, endUs: Math.min(asset.durationUs, 3 * US_PER_SEC) });
   }
 
-  const samplePhrases =
-    language === 'vi'
-      ? [
-          ['Chào', 'mừng', 'đến', 'với', 'T-CapCut', 'Studio'],
-          ['Dựng', 'phim', 'mượt', 'mà', 'trên', 'Apple', 'Silicon'],
-          ['Phụ', 'đề', 'Karaoke', 'chạy', 'từng', 'chữ'],
-          ['Xuất', 'video', 'siêu', 'tốc', 'chuẩn', '4K'],
-        ]
-      : [
-          ['Welcome', 'to', 'T-CapCut', 'Liquid', 'Glass'],
-          ['Hardware', 'accelerated', 'timeline', 'editing'],
-          ['Word-synced', 'karaoke', 'captions', 'ready'],
-        ];
-
   const segments: TranscriptSegment[] = speechSpans.map((span, idx) => {
-    const wordsList = samplePhrases[idx % samplePhrases.length];
+    const durStr = ((span.endUs - span.startUs) / US_PER_SEC).toFixed(1);
+    const labelWords = [`[Thoại`, `#${idx + 1}`, `(${durStr}s)]`];
     const spanDur = Math.max(300_000, span.endUs - span.startUs);
-    const wordDur = Math.floor(spanDur / wordsList.length);
+    const wordDur = Math.floor(spanDur / labelWords.length);
     return {
       id: `seg_vad_${idx}`,
       startUs: span.startUs,
       endUs: span.endUs,
-      text: wordsList.join(' '),
-      words: wordsList.map((w, wi) => ({
+      text: labelWords.join(' '),
+      words: labelWords.map((w, wi) => ({
         text: w,
         startUs: span.startUs + wi * wordDur,
-        endUs: wi === wordsList.length - 1 ? span.endUs : span.startUs + (wi + 1) * wordDur,
+        endUs: wi === labelWords.length - 1 ? span.endUs : span.startUs + (wi + 1) * wordDur,
       })),
     };
   });
@@ -409,7 +452,7 @@ export async function runAppleVisionMatting(
 ): Promise<string> {
   fs.mkdirSync(cacheDir, { recursive: true });
   const outPath = path.join(cacheDir, `${asset.id}_matting_mask.mp4`);
-  await execFileAsync(visionBinPath, ['person-matting', asset.sourcePath, outPath, 'balanced']);
+  await execFileAsync(visionBinPath, ['person-matting', asset.sourcePath, outPath, 'balanced'], EXEC_OPTS);
   return outPath;
 }
 
@@ -423,6 +466,6 @@ export async function runAppleVisionFaceTrack(
 ): Promise<FaceTrackResult> {
   fs.mkdirSync(cacheDir, { recursive: true });
   const outPath = path.join(cacheDir, `${asset.id}_facetrack.json`);
-  await execFileAsync(visionBinPath, ['face-track', asset.sourcePath, outPath]);
+  await execFileAsync(visionBinPath, ['face-track', asset.sourcePath, outPath], EXEC_OPTS);
   return JSON.parse(fs.readFileSync(outPath, 'utf8')) as FaceTrackResult;
 }

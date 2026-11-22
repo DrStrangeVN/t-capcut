@@ -1,10 +1,11 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { US_PER_SEC, type MediaAsset } from '@t-capcut/schema';
 
 const execFileAsync = promisify(execFile);
+const EXEC_OPTS = { maxBuffer: 64 * 1024 * 1024 };
 
 export interface FFprobeOutput {
   format?: {
@@ -77,6 +78,7 @@ export async function probeMedia(filePath: string, assetId: string): Promise<Med
     fileSizeBytes: stat.size,
     createdAt: Date.now(),
     proxyStatus: 'none',
+    filmstripCols: isImage ? 1 : 24,
   };
 }
 
@@ -197,7 +199,7 @@ export interface WaveformPeaksData {
 }
 
 /**
- * Extract fast mipmap audio waveform peaks (100 buckets/sec) saved as JSON for 120Hz Canvas drawing.
+ * Stream 8kHz mono s16le PCM directly from FFmpeg pipe:1 (O(1) RAM, zero temp file) to extract waveform peaks.
  */
 export async function extractWaveformPeaks(
   asset: MediaAsset,
@@ -208,47 +210,63 @@ export async function extractWaveformPeaks(
   const outPath = path.join(cacheDir, `${asset.id}_waveform.json`);
   if (fs.existsSync(outPath)) return outPath;
 
-  const rawPcmPath = path.join(cacheDir, `${asset.id}_mono8k.f32`);
   const sampleRate = 8000;
+  const samplesPerBucket = Math.max(1, Math.floor(sampleRate / bucketsPerSec));
+  const peaks: number[] = [];
 
-  try {
-    await execFileAsync('ffmpeg', [
-      '-y',
-      '-i',
-      asset.sourcePath,
-      '-vn',
-      '-ac',
-      '1',
-      '-ar',
-      String(sampleRate),
-      '-f',
-      'f32le',
-      rawPcmPath,
-    ]);
+  let bucketCount = 0;
+  let bMin = 0;
+  let bMax = 0;
+  let leftoverByte: number | null = null;
 
-    const buf = fs.readFileSync(rawPcmPath);
-    const floats = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
-    const samplesPerBucket = Math.max(1, Math.floor(sampleRate / bucketsPerSec));
-    const peaks: number[] = [];
+  await new Promise<void>((resolve, reject) => {
+    const ff = spawn(
+      'ffmpeg',
+      ['-hide_banner', '-loglevel', 'error', '-i', asset.sourcePath, '-vn', '-ac', '1', '-ar', String(sampleRate), '-f', 's16le', 'pipe:1'],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    );
 
-    for (let i = 0; i < floats.length; i += samplesPerBucket) {
-      let min = 0;
-      let max = 0;
-      const end = Math.min(floats.length, i + samplesPerBucket);
-      for (let j = i; j < end; j++) {
-        const v = floats[j];
-        if (v < min) min = v;
-        if (v > max) max = v;
+    let errTail = '';
+    ff.stderr?.on('data', (d: Buffer) => {
+      if (errTail.length < 2048) errTail += d.toString('utf8');
+    });
+
+    ff.stdout?.on('data', (chunk: Buffer) => {
+      let buf = chunk;
+      if (leftoverByte !== null) {
+        buf = Buffer.concat([Buffer.from([leftoverByte]), chunk]);
+        leftoverByte = null;
       }
-      peaks.push(Math.round(min * 1000) / 1000, Math.round(max * 1000) / 1000);
-    }
+      const usableLen = buf.length & ~1;
+      if (usableLen < buf.length) {
+        leftoverByte = buf[buf.length - 1];
+      }
+      for (let off = 0; off < usableLen; off += 2) {
+        const sample = buf.readInt16LE(off) / 32768;
+        if (sample < bMin) bMin = sample;
+        if (sample > bMax) bMax = sample;
+        bucketCount++;
+        if (bucketCount >= samplesPerBucket) {
+          peaks.push(Math.round(bMin * 1000) / 1000, Math.round(bMax * 1000) / 1000);
+          bucketCount = 0;
+          bMin = 0;
+          bMax = 0;
+        }
+      }
+    });
 
-    const payload: WaveformPeaksData = { sampleRate, bucketsPerSec, peaks };
-    fs.writeFileSync(outPath, JSON.stringify(payload));
-  } finally {
-    if (fs.existsSync(rawPcmPath)) fs.unlinkSync(rawPcmPath);
-  }
+    ff.on('error', reject);
+    ff.on('close', (code) => {
+      if (bucketCount > 0) {
+        peaks.push(Math.round(bMin * 1000) / 1000, Math.round(bMax * 1000) / 1000);
+      }
+      if (code === 0 || peaks.length > 0) resolve();
+      else reject(new Error(`ffmpeg waveform failed (${code}): ${errTail}`));
+    });
+  });
 
+  const payload: WaveformPeaksData = { sampleRate, bucketsPerSec, peaks };
+  fs.writeFileSync(outPath, JSON.stringify(payload));
   return outPath;
 }
 

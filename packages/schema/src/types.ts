@@ -43,6 +43,7 @@ export interface MediaAsset {
   mattingMaskPath?: string | null;
   waveformPath?: string | null;
   thumbnailStripPath?: string | null;
+  filmstripCols?: number;
   durationUs: Microseconds;
   width: number;
   height: number;
@@ -312,6 +313,14 @@ export interface ProjectSettings {
   loudnessTargetLufs: number;
 }
 
+export interface SavedLutAsset {
+  id: string;
+  title: string;
+  size: number;
+  filePath?: string | null;
+  cubeContent?: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -319,10 +328,13 @@ export interface Project {
   updatedAt: number;
   settings: ProjectSettings;
   assets: Record<string, MediaAsset>;
+  luts?: Record<string, SavedLutAsset>;
   tracks: Track[];
   clips: Record<string, Clip>;
   markers: TimelineMarker[];
   nestedTimelines?: Record<string, { id: string; name: string; tracks: Track[]; clips: Record<string, Clip> }>;
+  inPointUs?: Microseconds | null;
+  outPointUs?: Microseconds | null;
 }
 
 export interface CommandEntry {
@@ -336,7 +348,18 @@ export interface CommandEntry {
 }
 
 export interface ChatCutDiffOp {
-  op: 'split' | 'delete' | 'trim' | 'add_caption' | 'apply_color' | 'apply_transform' | 'add_marker' | 'set_aspect';
+  op:
+    | 'split'
+    | 'delete'
+    | 'trim'
+    | 'add_caption'
+    | 'apply_color'
+    | 'apply_transform'
+    | 'apply_audio'
+    | 'set_speed'
+    | 'add_effect'
+    | 'add_marker'
+    | 'set_aspect';
   description: string;
   targetClipId?: string;
   timeUs?: Microseconds;

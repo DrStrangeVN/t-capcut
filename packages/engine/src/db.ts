@@ -1,7 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createEmptyProject, type Project } from '@t-capcut/schema';
+import {
+  applyJsonPatch,
+  createEmptyProject,
+  createJsonPatch,
+  type JsonPatchOp,
+  type MediaAsset,
+  type Project,
+} from '@t-capcut/schema';
 
 export interface StoredCommandRow {
   id: string;
@@ -11,6 +18,9 @@ export interface StoredCommandRow {
   timestamp: number;
   before_json: string;
   after_json: string;
+  patch_forward: string | null;
+  patch_inverse: string | null;
+  is_snapshot: number;
 }
 
 export interface ProjectSummary {
@@ -21,12 +31,15 @@ export interface ProjectSummary {
   aspectRatio: string;
 }
 
+const SNAPSHOT_INTERVAL = 25;
+
 /**
- * Crash-proof SQLite WAL persistence + command-sourced Undo/Redo state store.
+ * Crash-proof SQLite WAL persistence + RFC6902 JSON-Patch command-sourced Undo/Redo store.
  */
 export class ProjectDatabase {
   private db: DatabaseSync;
   private undoCursors = new Map<string, string | null>();
+  private stepCounters = new Map<string, number>();
 
   constructor(dbPath: string) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -51,7 +64,10 @@ export class ProjectDatabase {
         label TEXT NOT NULL,
         timestamp INTEGER NOT NULL,
         before_json TEXT NOT NULL,
-        after_json TEXT NOT NULL
+        after_json TEXT NOT NULL,
+        patch_forward TEXT,
+        patch_inverse TEXT,
+        is_snapshot INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE INDEX IF NOT EXISTS idx_commands_project ON commands(project_id, timestamp);
@@ -64,6 +80,18 @@ export class ProjectDatabase {
         last_accessed INTEGER NOT NULL
       );
     `);
+
+    const cols = this.db.prepare('PRAGMA table_info(commands)').all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has('patch_forward')) {
+      this.db.exec('ALTER TABLE commands ADD COLUMN patch_forward TEXT');
+    }
+    if (!colNames.has('patch_inverse')) {
+      this.db.exec('ALTER TABLE commands ADD COLUMN patch_inverse TEXT');
+    }
+    if (!colNames.has('is_snapshot')) {
+      this.db.exec('ALTER TABLE commands ADD COLUMN is_snapshot INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   close(): void {
@@ -91,12 +119,26 @@ export class ProjectDatabase {
     });
   }
 
+  findAssetById(assetId: string): MediaAsset | null {
+    const rows = this.db.prepare('SELECT json_data FROM projects').all() as Array<{ json_data: string }>;
+    for (const r of rows) {
+      try {
+        const p = JSON.parse(r.json_data) as Project;
+        if (p.assets?.[assetId]) return p.assets[assetId];
+      } catch {
+        // ignore corrupt row
+      }
+    }
+    return null;
+  }
+
   createProject(id: string, name: string): Project {
     const project = createEmptyProject(id, name);
     this.db
       .prepare('INSERT INTO projects (id, name, json_data, updated_at, cursor_cmd_id) VALUES (?, ?, ?, ?, NULL)')
       .run(project.id, project.name, JSON.stringify(project), project.updatedAt);
     this.undoCursors.set(project.id, null);
+    this.stepCounters.set(project.id, 0);
     return project;
   }
 
@@ -109,6 +151,7 @@ export class ProjectDatabase {
       .prepare('INSERT INTO projects (id, name, json_data, updated_at, cursor_cmd_id) VALUES (?, ?, ?, ?, NULL)')
       .run(project.id, project.name, JSON.stringify(project), Date.now());
     this.undoCursors.set(project.id, null);
+    this.stepCounters.set(project.id, 0);
     return project;
   }
 
@@ -126,6 +169,7 @@ export class ProjectDatabase {
   deleteProject(id: string): boolean {
     const info = this.db.prepare('DELETE FROM projects WHERE id = ?').run(id);
     this.undoCursors.delete(id);
+    this.stepCounters.delete(id);
     return Number(info.changes) > 0;
   }
 
@@ -136,18 +180,40 @@ export class ProjectDatabase {
     }
 
     const updated: Project = { ...nextProject, updatedAt: Date.now() };
-    const beforeJson = JSON.stringify(current);
     const afterJson = JSON.stringify(updated);
     const parentId = this.undoCursors.get(projectId) ?? null;
     const cmdId = `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    const forwardPatch = createJsonPatch(current, updated);
+    const inversePatch = createJsonPatch(updated, current);
+
+    const stepCount = (this.stepCounters.get(projectId) ?? 0) + 1;
+    this.stepCounters.set(projectId, stepCount);
+    const isSnapshot = stepCount % SNAPSHOT_INTERVAL === 0 ? 1 : 0;
+
+    const beforeCol = isSnapshot ? JSON.stringify(current) : '';
+    const afterCol = isSnapshot ? afterJson : '';
 
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db
         .prepare(
-          'INSERT INTO commands (id, project_id, parent_id, label, timestamp, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          `INSERT INTO commands
+            (id, project_id, parent_id, label, timestamp, before_json, after_json, patch_forward, patch_inverse, is_snapshot)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(cmdId, projectId, parentId, label, updated.updatedAt, beforeJson, afterJson);
+        .run(
+          cmdId,
+          projectId,
+          parentId,
+          label,
+          updated.updatedAt,
+          beforeCol,
+          afterCol,
+          JSON.stringify(forwardPatch),
+          JSON.stringify(inversePatch),
+          isSnapshot
+        );
 
       this.db
         .prepare('UPDATE projects SET name = ?, json_data = ?, updated_at = ?, cursor_cmd_id = ? WHERE id = ?')
@@ -171,12 +237,21 @@ export class ProjectDatabase {
     if (!cursorId) return { project: current, undoneLabel: null };
 
     const cmd = this.db
-      .prepare('SELECT id, parent_id, label, before_json FROM commands WHERE id = ? AND project_id = ?')
+      .prepare('SELECT id, parent_id, label, before_json, patch_inverse FROM commands WHERE id = ? AND project_id = ?')
       .get(cursorId, projectId) as StoredCommandRow | undefined;
 
     if (!cmd) return { project: current, undoneLabel: null };
 
-    const restored = JSON.parse(cmd.before_json) as Project;
+    let restored: Project;
+    if (cmd.patch_inverse) {
+      const ops = JSON.parse(cmd.patch_inverse) as JsonPatchOp[];
+      restored = applyJsonPatch(current, ops);
+    } else if (cmd.before_json) {
+      restored = JSON.parse(cmd.before_json) as Project;
+    } else {
+      return { project: current, undoneLabel: null };
+    }
+
     restored.updatedAt = Date.now();
     this.db
       .prepare('UPDATE projects SET name = ?, json_data = ?, updated_at = ?, cursor_cmd_id = ? WHERE id = ?')
@@ -195,19 +270,28 @@ export class ProjectDatabase {
       cursorId === null
         ? this.db
             .prepare(
-              'SELECT id, label, after_json FROM commands WHERE project_id = ? AND parent_id IS NULL ORDER BY timestamp DESC LIMIT 1'
+              'SELECT id, label, after_json, patch_forward FROM commands WHERE project_id = ? AND parent_id IS NULL ORDER BY timestamp DESC LIMIT 1'
             )
             .get(projectId)
         : this.db
             .prepare(
-              'SELECT id, label, after_json FROM commands WHERE project_id = ? AND parent_id = ? ORDER BY timestamp DESC LIMIT 1'
+              'SELECT id, label, after_json, patch_forward FROM commands WHERE project_id = ? AND parent_id = ? ORDER BY timestamp DESC LIMIT 1'
             )
             .get(projectId, cursorId)
     ) as StoredCommandRow | undefined;
 
     if (!child) return { project: current, redoneLabel: null };
 
-    const restored = JSON.parse(child.after_json) as Project;
+    let restored: Project;
+    if (child.patch_forward) {
+      const ops = JSON.parse(child.patch_forward) as JsonPatchOp[];
+      restored = applyJsonPatch(current, ops);
+    } else if (child.after_json) {
+      restored = JSON.parse(child.after_json) as Project;
+    } else {
+      return { project: current, redoneLabel: null };
+    }
+
     restored.updatedAt = Date.now();
     this.db
       .prepare('UPDATE projects SET name = ?, json_data = ?, updated_at = ?, cursor_cmd_id = ? WHERE id = ?')
@@ -217,10 +301,22 @@ export class ProjectDatabase {
     return { project: restored, redoneLabel: child.label };
   }
 
+  jumpToCommand(projectId: string, targetCmdId: string): Project {
+    let steps = 0;
+    while (steps < 60) {
+      const cursor = this.undoCursors.get(projectId) ?? null;
+      if (cursor === targetCmdId) break;
+      const res = this.undo(projectId);
+      if (!res.undoneLabel) break;
+      steps++;
+    }
+    return this.getProject(projectId)!;
+  }
+
   getHistory(projectId: string): Array<{ id: string; parentId: string | null; label: string; timestamp: number; isCurrent: boolean }> {
     const cursorId = this.undoCursors.get(projectId) ?? null;
     const rows = this.db
-      .prepare('SELECT id, parent_id, label, timestamp FROM commands WHERE project_id = ? ORDER BY timestamp DESC LIMIT 40')
+      .prepare('SELECT id, parent_id, label, timestamp FROM commands WHERE project_id = ? ORDER BY timestamp DESC LIMIT 50')
       .all(projectId) as Array<{ id: string; parent_id: string | null; label: string; timestamp: number }>;
 
     return rows.map((r) => ({
@@ -230,6 +326,15 @@ export class ProjectDatabase {
       timestamp: r.timestamp,
       isCurrent: r.id === cursorId,
     }));
+  }
+
+  getCommandStorageStats(projectId: string): { count: number; totalBytes: number } {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) as cnt, COALESCE(SUM(LENGTH(before_json) + LENGTH(after_json) + LENGTH(COALESCE(patch_forward, '')) + LENGTH(COALESCE(patch_inverse, ''))), 0) as bytes FROM commands WHERE project_id = ?"
+      )
+      .get(projectId) as { cnt: number; bytes: number };
+    return { count: row.cnt, totalBytes: row.bytes };
   }
 
   getCacheEntry(hash: string): { filePath: string; bytes: number } | null {

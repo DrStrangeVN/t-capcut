@@ -6,6 +6,7 @@ import CoreGraphics
 import CoreText
 import ImageIO
 import Metal
+import Speech
 import UniformTypeIdentifiers
 
 struct FaceTrackPoint: Codable {
@@ -29,6 +30,28 @@ struct BenchmarkReport: Codable {
     let supportsAppleFamily: Bool
     let visionPersonSegmentation: Bool
     let visionFaceDetection: Bool
+    let speechRecognitionAvailable: Bool
+}
+
+struct SpeechWord: Codable {
+    let text: String
+    let startUs: Int64
+    let endUs: Int64
+    let confidence: Float
+}
+
+struct SpeechSegment: Codable {
+    let id: String
+    let startUs: Int64
+    let endUs: Int64
+    let text: String
+    let words: [SpeechWord]
+}
+
+struct SpeechReport: Codable {
+    let engine: String
+    let locale: String
+    let segments: [SpeechSegment]
 }
 
 func printJson<T: Encodable>(_ value: T) {
@@ -41,11 +64,13 @@ func printJson<T: Encodable>(_ value: T) {
 
 func runBenchmark() {
     let device = MTLCreateSystemDefaultDevice()
+    let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     let report = BenchmarkReport(
         metalDevice: device?.name ?? "Unavailable",
         supportsAppleFamily: device?.supportsFamily(.apple7) ?? false,
         visionPersonSegmentation: true,
-        visionFaceDetection: true
+        visionFaceDetection: true,
+        speechRecognitionAvailable: recognizer?.isAvailable ?? false
     )
     printJson(report)
 }
@@ -358,6 +383,114 @@ func runRenderTextPng(specPath: String, outputPngPath: String) throws {
     print("{\"ok\":true,\"output\":\"\(outputPngPath)\"}")
 }
 
+func runTranscribeSpeech(inputPath: String, localeId: String, outputJsonPath: String) throws {
+    guard Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil else {
+        throw NSError(domain: "tcapcut-vision", code: 9, userInfo: [NSLocalizedDescriptionKey: "NSSpeechRecognitionUsageDescription missing from binary Info.plist"])
+    }
+    let status = SFSpeechRecognizer.authorizationStatus()
+    if status == .notDetermined {
+        let authSem = DispatchSemaphore(value: 0)
+        var granted = false
+        SFSpeechRecognizer.requestAuthorization { s in
+            granted = (s == .authorized)
+            authSem.signal()
+        }
+        _ = authSem.wait(timeout: .now() + 8)
+        if !granted {
+            throw NSError(domain: "tcapcut-vision", code: 10, userInfo: [NSLocalizedDescriptionKey: "Speech recognition authorization denied"])
+        }
+    } else if status != .authorized {
+        throw NSError(domain: "tcapcut-vision", code: 11, userInfo: [NSLocalizedDescriptionKey: "Speech recognition not authorized (status=\(status.rawValue))"])
+    }
+
+    let locale = localeId == "vi" ? "vi-VN" : (localeId == "en" ? "en-US" : localeId)
+    guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale)), recognizer.isAvailable else {
+        throw NSError(domain: "tcapcut-vision", code: 12, userInfo: [NSLocalizedDescriptionKey: "SFSpeechRecognizer unavailable for locale \(locale)"])
+    }
+
+    let req = SFSpeechURLRecognitionRequest(url: URL(fileURLWithPath: inputPath))
+    req.shouldReportPartialResults = false
+    if recognizer.supportsOnDeviceRecognition {
+        req.requiresOnDeviceRecognition = true
+    }
+
+    let recSem = DispatchSemaphore(value: 0)
+    var finalText = ""
+    var words: [SpeechWord] = []
+    var recError: Error?
+
+    let task = recognizer.recognitionTask(with: req) { result, error in
+        if let err = error {
+            recError = err
+            recSem.signal()
+            return
+        }
+        if let res = result, res.isFinal {
+            finalText = res.bestTranscription.formattedString
+            words = res.bestTranscription.segments.map { seg in
+                let startUs = Int64(seg.timestamp * 1_000_000.0)
+                let durUs = max(50_000, Int64(seg.duration * 1_000_000.0))
+                return SpeechWord(
+                    text: seg.substring,
+                    startUs: startUs,
+                    endUs: startUs + durUs,
+                    confidence: seg.confidence
+                )
+            }
+            recSem.signal()
+        }
+    }
+
+    let waitRes = recSem.wait(timeout: .now() + 60)
+    if waitRes == .timedOut {
+        task.cancel()
+        throw NSError(domain: "tcapcut-vision", code: 13, userInfo: [NSLocalizedDescriptionKey: "Speech recognition timed out"])
+    }
+    if let err = recError, words.isEmpty {
+        throw err
+    }
+
+    // Group words into natural caption chunks (max 7 words or >600ms pause)
+    var segments: [SpeechSegment] = []
+    var chunk: [SpeechWord] = []
+    for (idx, w) in words.enumerated() {
+        if let prev = chunk.last, (chunk.count >= 7 || (w.startUs - prev.endUs) > 650_000) {
+            segments.append(SpeechSegment(
+                id: "seg_sf_\(segments.count)",
+                startUs: chunk.first!.startUs,
+                endUs: chunk.last!.endUs,
+                text: chunk.map(\.text).joined(separator: " "),
+                words: chunk
+            ))
+            chunk = []
+        }
+        chunk.append(w)
+        if idx == words.count - 1 && !chunk.isEmpty {
+            segments.append(SpeechSegment(
+                id: "seg_sf_\(segments.count)",
+                startUs: chunk.first!.startUs,
+                endUs: chunk.last!.endUs,
+                text: chunk.map(\.text).joined(separator: " "),
+                words: chunk
+            ))
+        }
+    }
+    if segments.isEmpty && !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        segments.append(SpeechSegment(
+            id: "seg_sf_0",
+            startUs: 0,
+            endUs: 3_000_000,
+            text: finalText,
+            words: []
+        ))
+    }
+
+    let report = SpeechReport(engine: "apple-speech", locale: locale, segments: segments)
+    let data = try JSONEncoder().encode(report)
+    try data.write(to: URL(fileURLWithPath: outputJsonPath))
+    print("{\"ok\":true,\"segments\":\(segments.count)}")
+}
+
 let args = CommandLine.arguments
 if args.count < 2 {
     fputs("Usage: tcapcut-vision <benchmark|face-track|person-matting> ...\n", stderr)
@@ -387,6 +520,12 @@ do {
             exit(1)
         }
         try runRenderTextPng(specPath: args[2], outputPngPath: args[3])
+    case "transcribe-speech":
+        guard args.count >= 5 else {
+            fputs("Usage: tcapcut-vision transcribe-speech <input> <locale> <output.json>\n", stderr)
+            exit(1)
+        }
+        try runTranscribeSpeech(inputPath: args[2], localeId: args[3], outputJsonPath: args[4])
     default:
         fputs("Unknown command: \(args[1])\n", stderr)
         exit(1)

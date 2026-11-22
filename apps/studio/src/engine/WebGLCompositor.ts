@@ -1,5 +1,6 @@
 import {
   getClipPropertyAtTime,
+  resolveEffectiveClips,
   type BlendMode,
   type Clip,
   type ColorGradeState,
@@ -46,6 +47,16 @@ void main() {
   vScreenUv = pos * 0.5 + 0.5;
 }`;
 
+const BLIT_VERTEX_SHADER = `#version 300 es
+precision highp float;
+layout(location = 0) in vec2 aPos;
+layout(location = 1) in vec2 aUv;
+out vec2 vUv;
+void main() {
+  gl_Position = vec4(aPos, 0.0, 1.0);
+  vUv = vec2(aUv.x, 1.0 - aUv.y);
+}`;
+
 const FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
@@ -69,7 +80,6 @@ uniform float uOpacity;
 uniform vec4 uCrop;
 uniform int uBlendMode;
 
-// Color Grading
 uniform float uExposure;
 uniform float uBrightness;
 uniform float uContrast;
@@ -84,18 +94,15 @@ uniform vec3 uLift;
 uniform vec3 uGamma;
 uniform vec3 uGain;
 
-// 8-Channel HSL: [hue, sat, lum] for Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta
 uniform vec3 uHsl[8];
 uniform int uHasHsl;
 
-// Chroma Key
 uniform int uChromaEnabled;
 uniform vec3 uChromaColor;
 uniform float uChromaSimilarity;
 uniform float uChromaSmoothness;
 uniform float uChromaSpill;
 
-// Geometric Mask
 uniform int uMaskShape; // 0 none, 1 linear, 2 mirror, 3 circle, 4 rect, 5 heart, 6 star
 uniform vec2 uMaskCenter;
 uniform vec2 uMaskSize;
@@ -103,7 +110,6 @@ uniform float uMaskRotation;
 uniform float uMaskFeather;
 uniform int uMaskInverted;
 
-// VFX / Transition: 0 none, 1 glitch, 2 chromatic, 3 vhs, 4 zoom_blur, 5 dreamy, 6 film_burn, 7 wipe_left, 8 wipe_right, 9 spin
 uniform int uEffectType;
 uniform float uEffectIntensity;
 uniform float uTimeSec;
@@ -168,6 +174,30 @@ float sdCircle(vec2 p, vec2 r) {
 float sdBox(vec2 p, vec2 b) {
   vec2 d = abs(p) - b;
   return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+}
+
+float sdHeart(vec2 p) {
+  vec2 q = vec2(abs(p.x), -p.y + 0.5);
+  if (q.y + q.x > 1.0) {
+    vec2 d = q - vec2(0.25, 0.75);
+    return sqrt(dot(d, d)) - 0.35355;
+  }
+  vec2 d1 = q - vec2(0.0, 1.0);
+  vec2 d2 = q - 0.5 * max(q.x + q.y, 0.0);
+  return sqrt(min(dot(d1, d1), dot(d2, d2))) * sign(q.x - q.y);
+}
+
+float sdStar5(vec2 p, float r, float rf) {
+  const vec2 k1 = vec2(0.809016994375, -0.587785252292);
+  const vec2 k2 = vec2(-k1.x, k1.y);
+  p.x = abs(p.x);
+  p -= 2.0 * max(dot(k1, p), 0.0) * k1;
+  p -= 2.0 * max(dot(k2, p), 0.0) * k2;
+  p.x = abs(p.x);
+  p.y -= r;
+  vec2 ba = rf * vec2(-k1.y, k1.x) - vec2(0.0, 1.0);
+  float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, r);
+  return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
 }
 
 vec3 blendRgb(vec3 base, vec3 src, int mode) {
@@ -291,7 +321,9 @@ void main() {
     if (uMaskShape == 1) d = p.y;
     else if (uMaskShape == 2) d = abs(p.y) - uMaskSize.y * 0.5;
     else if (uMaskShape == 3) d = sdCircle(p, uMaskSize * 0.5);
-    else d = sdBox(p, uMaskSize * 0.5);
+    else if (uMaskShape == 4) d = sdBox(p, uMaskSize * 0.5);
+    else if (uMaskShape == 5) d = sdHeart(p / max(vec2(0.05), uMaskSize) * 1.25);
+    else d = sdStar5(p / max(vec2(0.05), uMaskSize) * 1.4, 0.65, 0.45);
 
     float m = 1.0 - smoothstep(-max(0.002, uMaskFeather), max(0.002, uMaskFeather), d);
     if (uMaskInverted == 1) m = 1.0 - m;
@@ -316,7 +348,6 @@ void main() {
   if (uHasHsl == 1) {
     vec3 hsl = rgb2hsl(clamp(col, 0.0, 1.0));
     if (hsl.y > 0.04) {
-      // Map hue [0..1] across 8 color centers
       float centers[8] = float[8](0.0, 0.083, 0.166, 0.333, 0.5, 0.666, 0.79, 0.91);
       for (int i = 0; i < 8; i++) {
         float dh = abs(hsl.x - centers[i]);
@@ -386,7 +417,68 @@ const EFFECT_INDEX: Record<string, number> = {
   spin: 9,
 };
 
+const MASK_SHAPE_INDEX: Record<Clip['mask']['shape'], number> = {
+  none: 0,
+  linear: 1,
+  mirror: 2,
+  circle: 3,
+  rectangle: 4,
+  heart: 5,
+  star: 6,
+};
+
 const HSL_KEYS = ['red', 'orange', 'yellow', 'green', 'aqua', 'blue', 'purple', 'magenta'] as const;
+
+const MAIN_UNIFORM_NAMES = [
+  'uTexture',
+  'uMaskTexture',
+  'uLutTexture',
+  'uBackBuffer',
+  'uCurvesTexture',
+  'uHasMattingMask',
+  'uHasLut',
+  'uLutSize',
+  'uLutIntensity',
+  'uHasCurves',
+  'uOpacity',
+  'uCrop',
+  'uBlendMode',
+  'uExposure',
+  'uBrightness',
+  'uContrast',
+  'uSaturation',
+  'uVibrance',
+  'uTemperature',
+  'uTint',
+  'uVignette',
+  'uSharpness',
+  'uSrcTexel',
+  'uLift',
+  'uGamma',
+  'uGain',
+  'uHsl[0]',
+  'uHasHsl',
+  'uChromaEnabled',
+  'uChromaColor',
+  'uChromaSimilarity',
+  'uChromaSmoothness',
+  'uChromaSpill',
+  'uMaskShape',
+  'uMaskCenter',
+  'uMaskSize',
+  'uMaskRotation',
+  'uMaskFeather',
+  'uMaskInverted',
+  'uEffectType',
+  'uEffectIntensity',
+  'uTimeSec',
+  'uResolution',
+  'uSrcResolution',
+  'uTranslate',
+  'uScale',
+  'uRotationRad',
+  'uFlip',
+] as const;
 
 function hexToRgbNorm(hex: string): [number, number, number] {
   const c = hex.replace('#', '');
@@ -398,9 +490,8 @@ function hexToRgbNorm(hex: string): [number, number, number] {
   ];
 }
 
-function sampleCurvePoints(pts: [number, number][], x: number): number {
-  if (!pts || pts.length === 0) return x;
-  const sorted = [...pts].sort((a, b) => a[0] - b[0]);
+function sampleSortedCurve(sorted: [number, number][], x: number): number {
+  if (!sorted || sorted.length === 0) return x;
   if (x <= sorted[0][0]) return sorted[0][1];
   if (x >= sorted[sorted.length - 1][0]) return sorted[sorted.length - 1][1];
   for (let i = 0; i < sorted.length - 1; i++) {
@@ -430,21 +521,32 @@ function compileShader(gl: WebGL2RenderingContext, type: number, src: string): W
 export class WebGLCompositor {
   private gl: WebGL2RenderingContext;
   private program: WebGLProgram;
-  private customPrograms = new Map<string, { src: string; program: WebGLProgram }>();
+  private uLoc: Record<string, WebGLUniformLocation | null> = {};
+  private customPrograms = new Map<string, { src: string; program: WebGLProgram; uTex: WebGLUniformLocation | null; uTime: WebGLUniformLocation | null; uInt: WebGLUniformLocation | null }>();
   private vao: WebGLVertexArrayObject;
-  private assetTextures = new Map<string, WebGLTexture>();
+  private vbo: WebGLBuffer;
+  private clipTextures = new Map<string, WebGLTexture>();
+  private lastVideoTimes = new Map<string, number>();
   private lutTextures = new Map<string, { tex: WebGLTexture; size: number }>();
   private curvesTexture: WebGLTexture;
+  private lastCurvesSig = '';
+  private lastCurvesActive = false;
   private backTexture: WebGLTexture;
   private backFbo: WebGLFramebuffer;
+  private customFxTexture: WebGLTexture;
+  private customFxFbo: WebGLFramebuffer;
+  private glowTexture: WebGLTexture;
+  private glowFbo: WebGLFramebuffer;
   private fboW = 0;
   private fboH = 0;
-  private pixelProbe = new Uint8Array(4);
+  private glowProbe = new Uint8Array(16 * 4);
+  private lastGlowSampleAt = 0;
+  private cachedGlowCss: string | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', {
-      alpha: false,
-      antialias: true,
+      alpha: true,
+      antialias: false,
       premultipliedAlpha: false,
       preserveDrawingBuffer: true,
     });
@@ -458,8 +560,14 @@ export class WebGLCompositor {
     gl.attachShader(this.program, vs);
     gl.attachShader(this.program, fs);
     gl.linkProgram(this.program);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
       throw new Error(`Program link failed: ${gl.getProgramInfoLog(this.program)}`);
+    }
+
+    for (const name of MAIN_UNIFORM_NAMES) {
+      this.uLoc[name] = gl.getUniformLocation(this.program, name);
     }
 
     const quad = new Float32Array([
@@ -470,8 +578,8 @@ export class WebGLCompositor {
     ]);
     this.vao = gl.createVertexArray()!;
     gl.bindVertexArray(this.vao);
-    const vbo = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    this.vbo = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
     gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
@@ -488,11 +596,24 @@ export class WebGLCompositor {
 
     this.backTexture = gl.createTexture()!;
     this.backFbo = gl.createFramebuffer()!;
+    this.customFxTexture = gl.createTexture()!;
+    this.customFxFbo = gl.createFramebuffer()!;
+
+    // 4x4 tiny FBO for zero-stall ambient glow sampling
+    this.glowTexture = gl.createTexture()!;
+    this.glowFbo = gl.createFramebuffer()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.glowTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 4, 4, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.glowTexture, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  private getOrCompileCustomProgram(id: string, bodyGlsl: string): WebGLProgram | null {
+  private getOrCompileCustomProgram(id: string, bodyGlsl: string) {
     const cached = this.customPrograms.get(id);
-    if (cached && cached.src === bodyGlsl) return cached.program;
+    if (cached && cached.src === bodyGlsl) return cached;
     const gl = this.gl;
     const wrappedFs = `#version 300 es
 precision highp float;
@@ -506,33 +627,48 @@ void main() {
   fragColor = effectMain(uTexture, vUv, uTimeSec, uEffectIntensity);
 }`;
     try {
-      const vs = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
+      const vs = compileShader(gl, gl.VERTEX_SHADER, BLIT_VERTEX_SHADER);
       const fs = compileShader(gl, gl.FRAGMENT_SHADER, wrappedFs);
       const prog = gl.createProgram()!;
       gl.attachShader(prog, vs);
       gl.attachShader(prog, fs);
       gl.linkProgram(prog);
+      gl.deleteShader(vs);
+      gl.deleteShader(fs);
       if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
-      this.customPrograms.set(id, { src: bodyGlsl, program: prog });
-      return prog;
+      const entry = {
+        src: bodyGlsl,
+        program: prog,
+        uTex: gl.getUniformLocation(prog, 'uTexture'),
+        uTime: gl.getUniformLocation(prog, 'uTimeSec'),
+        uInt: gl.getUniformLocation(prog, 'uEffectIntensity'),
+      };
+      this.customPrograms.set(id, entry);
+      return entry;
     } catch {
       return null;
     }
   }
 
-  private ensureBackBuffer(w: number, h: number): void {
+  private ensureFbos(w: number, h: number): void {
     const gl = this.gl;
     if (this.fboW === w && this.fboH === h) return;
     this.fboW = w;
     this.fboH = h;
-    gl.bindTexture(gl.TEXTURE_2D, this.backTexture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.backFbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.backTexture, 0);
+
+    const alloc = (tex: WebGLTexture, fbo: WebGLFramebuffer) => {
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    };
+
+    alloc(this.backTexture, this.backFbo);
+    alloc(this.customFxTexture, this.customFxFbo);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
@@ -542,13 +678,27 @@ void main() {
     if (isIdentity(curves.master) && isIdentity(curves.red) && isIdentity(curves.green) && isIdentity(curves.blue)) {
       return false;
     }
+
+    const sig = JSON.stringify(curves);
+    if (sig === this.lastCurvesSig) {
+      return this.lastCurvesActive;
+    }
+    this.lastCurvesSig = sig;
+    this.lastCurvesActive = true;
+
+    // Pre-sort each channel once before the 256-entry LUT fill (avoids 1,024 per-frame sorts)
+    const mSorted = [...curves.master].sort((a, b) => a[0] - b[0]);
+    const rSorted = [...curves.red].sort((a, b) => a[0] - b[0]);
+    const gSorted = [...curves.green].sort((a, b) => a[0] - b[0]);
+    const bSorted = [...curves.blue].sort((a, b) => a[0] - b[0]);
+
     const row = new Uint8Array(256 * 4);
     for (let i = 0; i < 256; i++) {
       const x = i / 255;
-      const m = sampleCurvePoints(curves.master, x);
-      row[i * 4] = Math.round(Math.min(1, Math.max(0, sampleCurvePoints(curves.red, m))) * 255);
-      row[i * 4 + 1] = Math.round(Math.min(1, Math.max(0, sampleCurvePoints(curves.green, m))) * 255);
-      row[i * 4 + 2] = Math.round(Math.min(1, Math.max(0, sampleCurvePoints(curves.blue, m))) * 255);
+      const m = sampleSortedCurve(mSorted, x);
+      row[i * 4] = Math.round(Math.min(1, Math.max(0, sampleSortedCurve(rSorted, m))) * 255);
+      row[i * 4 + 1] = Math.round(Math.min(1, Math.max(0, sampleSortedCurve(gSorted, m))) * 255);
+      row[i * 4 + 2] = Math.round(Math.min(1, Math.max(0, sampleSortedCurve(bSorted, m))) * 255);
       row[i * 4 + 3] = 255;
     }
     const gl = this.gl;
@@ -560,6 +710,8 @@ void main() {
 
   uploadLut(lut: LoadedLutTexture): void {
     const gl = this.gl;
+    const prev = this.lutTextures.get(lut.id);
+    if (prev) gl.deleteTexture(prev.tex);
     const N = lut.size;
     const width = N * N;
     const height = N;
@@ -587,9 +739,10 @@ void main() {
     this.lutTextures.set(lut.id, { tex, size: N });
   }
 
-  private getOrUpdateTexture(key: string, source: HTMLVideoElement | HTMLImageElement): WebGLTexture {
+  private getOrUpdateTexture(key: string, source: HTMLVideoElement | HTMLImageElement, forceUpload = false): WebGLTexture {
     const gl = this.gl;
-    let tex = this.assetTextures.get(key);
+    let tex = this.clipTextures.get(key);
+    const isNew = !tex;
     if (!tex) {
       tex = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -597,11 +750,26 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      this.assetTextures.set(key, tex);
+      this.clipTextures.set(key, tex);
     } else {
       gl.bindTexture(gl.TEXTURE_2D, tex);
     }
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+
+    if (source instanceof HTMLVideoElement) {
+      if (source.readyState < 2) {
+        return tex;
+      }
+      const prevTime = this.lastVideoTimes.get(key);
+      if (isNew || forceUpload || prevTime === undefined || Math.abs(source.currentTime - prevTime) > 1e-4 || !source.paused) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+        this.lastVideoTimes.set(key, source.currentTime);
+      }
+    } else if (isNew || forceUpload || source.complete) {
+      if (source.complete && source.naturalWidth > 0) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+      }
+    }
+
     return tex;
   }
 
@@ -609,7 +777,8 @@ void main() {
     project: Project,
     playheadUs: Microseconds,
     mediaElements: Map<string, HTMLVideoElement | HTMLImageElement>,
-    maskElements: Map<string, HTMLVideoElement>
+    maskElements: Map<string, HTMLVideoElement>,
+    options?: { nestedScopeId?: string | null; forceUpload?: boolean; skipGlow?: boolean }
   ): string | null {
     const gl = this.gl;
     const w = project.settings.width;
@@ -618,7 +787,7 @@ void main() {
       this.canvas.width = w;
       this.canvas.height = h;
     }
-    this.ensureBackBuffer(w, h);
+    this.ensureFbos(w, h);
 
     gl.viewport(0, 0, w, h);
     gl.clearColor(0.02, 0.025, 0.04, 1);
@@ -626,22 +795,17 @@ void main() {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    const activeVisualClips = Object.values(project.clips)
+    // Flatten compound clips transparently so compound & nested editing render seamlessly
+    const flatClips = resolveEffectiveClips(project, options?.nestedScopeId);
+    const activeVisualClips = flatClips
       .filter((c) => {
-        if (c.disabled || (c.kind !== 'video' && c.kind !== 'image')) return false;
-        const track = project.tracks.find((t) => t.id === c.trackId);
-        if (track?.hidden) return false;
+        if (c.kind !== 'video' && c.kind !== 'image') return false;
         return playheadUs >= c.timelineStartUs && playheadUs < c.timelineStartUs + c.durationUs;
       })
-      .sort((a, b) => {
-        const ta = project.tracks.find((t) => t.id === a.trackId)?.index ?? 0;
-        const tb = project.tracks.find((t) => t.id === b.trackId)?.index ?? 0;
-        return ta - tb;
-      });
+      .sort((a, b) => (a.__effectiveTrackIndex ?? 0) - (b.__effectiveTrackIndex ?? 0));
 
-    const activeEffectClip = Object.values(project.clips).find(
+    const activeEffectClip = flatClips.find(
       (c) =>
-        !c.disabled &&
         (c.kind === 'effect' || c.kind === 'adjustment') &&
         playheadUs >= c.timelineStartUs &&
         playheadUs < c.timelineStartUs + c.durationUs
@@ -651,34 +815,33 @@ void main() {
 
     for (const clip of activeVisualClips) {
       if (!clip.assetId) continue;
-      const el = mediaElements.get(clip.assetId);
+      // Clip-keyed pool lookup first, fallback to assetId lookup for headless / offscreen callers
+      const el = mediaElements.get(clip.id) ?? mediaElements.get(clip.assetId);
       if (!el) continue;
       const srcW = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth;
       const srcH = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight;
       if (!srcW || !srcH) continue;
 
       const localUs = playheadUs - clip.timelineStartUs;
-      const tex = this.getOrUpdateTexture(clip.assetId, el);
+      let tex = this.getOrUpdateTexture(clip.id, el, options?.forceUpload);
       const primaryFx = clip.effects[0] ?? activeEffectClip?.effects[0];
 
-      // Custom GLSL Plugin Path if user attached a custom shader
+      // Multi-pass Custom GLSL -> FBO -> Full Grading/Mask/Keyframes/Blend Pipeline
       if (primaryFx?.customFragmentGlsl) {
-        const customProg = this.getOrCompileCustomProgram(primaryFx.id, primaryFx.customFragmentGlsl);
-        if (customProg) {
-          gl.useProgram(customProg);
+        const customEntry = this.getOrCompileCustomProgram(primaryFx.id, primaryFx.customFragmentGlsl);
+        if (customEntry) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, this.customFxFbo);
+          gl.viewport(0, 0, w, h);
+          gl.useProgram(customEntry.program);
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, tex);
-          gl.uniform1i(gl.getUniformLocation(customProg, 'uTexture'), 0);
-          gl.uniform2f(gl.getUniformLocation(customProg, 'uResolution'), w, h);
-          gl.uniform2f(gl.getUniformLocation(customProg, 'uSrcResolution'), srcW, srcH);
-          gl.uniform2f(gl.getUniformLocation(customProg, 'uTranslate'), clip.transform.x, clip.transform.y);
-          gl.uniform2f(gl.getUniformLocation(customProg, 'uScale'), clip.transform.scaleX, clip.transform.scaleY);
-          gl.uniform1f(gl.getUniformLocation(customProg, 'uRotationRad'), (clip.transform.rotation * Math.PI) / 180);
-          gl.uniform2f(gl.getUniformLocation(customProg, 'uFlip'), clip.transform.flipH ? -1 : 1, clip.transform.flipV ? -1 : 1);
-          gl.uniform1f(gl.getUniformLocation(customProg, 'uTimeSec'), playheadUs / 1_000_000);
-          gl.uniform1f(gl.getUniformLocation(customProg, 'uEffectIntensity'), primaryFx.intensity);
+          gl.uniform1i(customEntry.uTex, 0);
+          gl.uniform1f(customEntry.uTime, playheadUs / 1_000_000);
+          gl.uniform1f(customEntry.uInt, primaryFx.intensity);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-          continue;
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.viewport(0, 0, w, h);
+          tex = this.customFxTexture;
         }
       }
 
@@ -693,38 +856,38 @@ void main() {
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.uniform1i(gl.getUniformLocation(this.program, 'uTexture'), 0);
+      gl.uniform1i(this.uLoc.uTexture, 0);
 
-      const maskEl = clip.aiMattingEnabled ? maskElements.get(clip.assetId) : undefined;
+      const maskEl = clip.aiMattingEnabled ? (maskElements.get(clip.id) ?? maskElements.get(clip.assetId)) : undefined;
       if (maskEl && maskEl.videoWidth > 0) {
-        const mTex = this.getOrUpdateTexture(`${clip.assetId}_mask`, maskEl);
+        const mTex = this.getOrUpdateTexture(`${clip.id}_mask`, maskEl, options?.forceUpload);
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, mTex);
-        gl.uniform1i(gl.getUniformLocation(this.program, 'uMaskTexture'), 1);
-        gl.uniform1i(gl.getUniformLocation(this.program, 'uHasMattingMask'), 1);
+        gl.uniform1i(this.uLoc.uMaskTexture, 1);
+        gl.uniform1i(this.uLoc.uHasMattingMask, 1);
       } else {
-        gl.uniform1i(gl.getUniformLocation(this.program, 'uHasMattingMask'), 0);
+        gl.uniform1i(this.uLoc.uHasMattingMask, 0);
       }
 
       const lutEntry = clip.colorGrade.lutId ? this.lutTextures.get(clip.colorGrade.lutId) : undefined;
       if (lutEntry) {
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, lutEntry.tex);
-        gl.uniform1i(gl.getUniformLocation(this.program, 'uLutTexture'), 2);
-        gl.uniform1i(gl.getUniformLocation(this.program, 'uHasLut'), 1);
-        gl.uniform1f(gl.getUniformLocation(this.program, 'uLutSize'), lutEntry.size);
-        gl.uniform1f(gl.getUniformLocation(this.program, 'uLutIntensity'), clip.colorGrade.lutIntensity);
+        gl.uniform1i(this.uLoc.uLutTexture, 2);
+        gl.uniform1i(this.uLoc.uHasLut, 1);
+        gl.uniform1f(this.uLoc.uLutSize, lutEntry.size);
+        gl.uniform1f(this.uLoc.uLutIntensity, clip.colorGrade.lutIntensity);
       } else {
-        gl.uniform1i(gl.getUniformLocation(this.program, 'uHasLut'), 0);
+        gl.uniform1i(this.uLoc.uHasLut, 0);
       }
 
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, this.backTexture);
-      gl.uniform1i(gl.getUniformLocation(this.program, 'uBackBuffer'), 3);
+      gl.uniform1i(this.uLoc.uBackBuffer, 3);
 
       const hasCurves = this.uploadCurves(clip.colorGrade.curves);
-      gl.uniform1i(gl.getUniformLocation(this.program, 'uCurvesTexture'), 4);
-      gl.uniform1i(gl.getUniformLocation(this.program, 'uHasCurves'), hasCurves ? 1 : 0);
+      gl.uniform1i(this.uLoc.uCurvesTexture, 4);
+      gl.uniform1i(this.uLoc.uHasCurves, hasCurves ? 1 : 0);
 
       const x = getClipPropertyAtTime(clip, 'x', localUs);
       const y = getClipPropertyAtTime(clip, 'y', localUs);
@@ -737,55 +900,38 @@ void main() {
         opacity *= localUs / Math.max(1, clip.transitionIn.durationUs);
       }
 
-      gl.uniform2f(gl.getUniformLocation(this.program, 'uResolution'), w, h);
-      gl.uniform2f(gl.getUniformLocation(this.program, 'uSrcResolution'), srcW, srcH);
-      gl.uniform2f(gl.getUniformLocation(this.program, 'uSrcTexel'), 1 / srcW, 1 / srcH);
-      gl.uniform2f(gl.getUniformLocation(this.program, 'uTranslate'), x, y);
-      gl.uniform2f(gl.getUniformLocation(this.program, 'uScale'), scaleX, scaleY);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uRotationRad'), (rot * Math.PI) / 180);
-      gl.uniform2f(
-        gl.getUniformLocation(this.program, 'uFlip'),
-        clip.transform.flipH ? -1 : 1,
-        clip.transform.flipV ? -1 : 1
-      );
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uOpacity'), opacity);
+      gl.uniform2f(this.uLoc.uResolution, w, h);
+      gl.uniform2f(this.uLoc.uSrcResolution, tex === this.customFxTexture ? w : srcW, tex === this.customFxTexture ? h : srcH);
+      gl.uniform2f(this.uLoc.uSrcTexel, 1 / srcW, 1 / srcH);
+      gl.uniform2f(this.uLoc.uTranslate, x, y);
+      gl.uniform2f(this.uLoc.uScale, scaleX, scaleY);
+      gl.uniform1f(this.uLoc.uRotationRad, (rot * Math.PI) / 180);
+      gl.uniform2f(this.uLoc.uFlip, clip.transform.flipH ? -1 : 1, clip.transform.flipV ? -1 : 1);
+      gl.uniform1f(this.uLoc.uOpacity, opacity);
       gl.uniform4f(
-        gl.getUniformLocation(this.program, 'uCrop'),
+        this.uLoc.uCrop,
         clip.transform.cropLeft,
         clip.transform.cropRight,
         clip.transform.cropTop,
         clip.transform.cropBottom
       );
-      gl.uniform1i(
-        gl.getUniformLocation(this.program, 'uBlendMode'),
-        BLEND_MODE_INDEX[clip.transform.blendMode] ?? 0
-      );
+      gl.uniform1i(this.uLoc.uBlendMode, BLEND_MODE_INDEX[clip.transform.blendMode] ?? 0);
 
       const adj = activeEffectClip?.colorGrade;
       const cg = clip.colorGrade;
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uExposure'), cg.exposure + (adj?.exposure ?? 0));
-      gl.uniform1f(
-        gl.getUniformLocation(this.program, 'uBrightness'),
-        getClipPropertyAtTime(clip, 'brightness', localUs) + (adj?.brightness ?? 0)
-      );
-      gl.uniform1f(
-        gl.getUniformLocation(this.program, 'uContrast'),
-        getClipPropertyAtTime(clip, 'contrast', localUs) + (adj?.contrast ?? 0)
-      );
-      gl.uniform1f(
-        gl.getUniformLocation(this.program, 'uSaturation'),
-        getClipPropertyAtTime(clip, 'saturation', localUs) + (adj?.saturation ?? 0)
-      );
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uVibrance'), cg.vibrance + (adj?.vibrance ?? 0));
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uTemperature'), cg.temperature + (adj?.temperature ?? 0));
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uTint'), cg.tint + (adj?.tint ?? 0));
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uVignette'), Math.max(cg.vignette, adj?.vignette ?? 0));
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uSharpness'), Math.max(cg.sharpness, adj?.sharpness ?? 0));
-      gl.uniform3fv(gl.getUniformLocation(this.program, 'uLift'), cg.wheels.lift);
-      gl.uniform3fv(gl.getUniformLocation(this.program, 'uGamma'), cg.wheels.gamma);
-      gl.uniform3fv(gl.getUniformLocation(this.program, 'uGain'), cg.wheels.gain);
+      gl.uniform1f(this.uLoc.uExposure, cg.exposure + (adj?.exposure ?? 0));
+      gl.uniform1f(this.uLoc.uBrightness, getClipPropertyAtTime(clip, 'brightness', localUs) + (adj?.brightness ?? 0));
+      gl.uniform1f(this.uLoc.uContrast, getClipPropertyAtTime(clip, 'contrast', localUs) + (adj?.contrast ?? 0));
+      gl.uniform1f(this.uLoc.uSaturation, getClipPropertyAtTime(clip, 'saturation', localUs) + (adj?.saturation ?? 0));
+      gl.uniform1f(this.uLoc.uVibrance, cg.vibrance + (adj?.vibrance ?? 0));
+      gl.uniform1f(this.uLoc.uTemperature, cg.temperature + (adj?.temperature ?? 0));
+      gl.uniform1f(this.uLoc.uTint, cg.tint + (adj?.tint ?? 0));
+      gl.uniform1f(this.uLoc.uVignette, Math.max(cg.vignette, adj?.vignette ?? 0));
+      gl.uniform1f(this.uLoc.uSharpness, Math.max(cg.sharpness, adj?.sharpness ?? 0));
+      gl.uniform3fv(this.uLoc.uLift, cg.wheels.lift);
+      gl.uniform3fv(this.uLoc.uGamma, cg.wheels.gamma);
+      gl.uniform3fv(this.uLoc.uGain, cg.wheels.gain);
 
-      // 8-Channel HSL
       const hslArr = new Float32Array(24);
       let anyHsl = false;
       HSL_KEYS.forEach((k, idx) => {
@@ -795,36 +941,25 @@ void main() {
         hslArr[idx * 3 + 1] = entry?.sat ?? 0;
         hslArr[idx * 3 + 2] = entry?.lum ?? 0;
       });
-      gl.uniform1i(gl.getUniformLocation(this.program, 'uHasHsl'), anyHsl ? 1 : 0);
-      gl.uniform3fv(gl.getUniformLocation(this.program, 'uHsl[0]'), hslArr);
+      gl.uniform1i(this.uLoc.uHasHsl, anyHsl ? 1 : 0);
+      gl.uniform3fv(this.uLoc['uHsl[0]'], hslArr);
 
-      // Chroma key
-      gl.uniform1i(gl.getUniformLocation(this.program, 'uChromaEnabled'), clip.chromaKey.enabled ? 1 : 0);
+      gl.uniform1i(this.uLoc.uChromaEnabled, clip.chromaKey.enabled ? 1 : 0);
       const ckRgb = hexToRgbNorm(clip.chromaKey.colorHex);
-      gl.uniform3f(gl.getUniformLocation(this.program, 'uChromaColor'), ckRgb[0], ckRgb[1], ckRgb[2]);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uChromaSimilarity'), clip.chromaKey.similarity);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uChromaSmoothness'), clip.chromaKey.smoothness);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uChromaSpill'), clip.chromaKey.spillSuppression);
+      gl.uniform3f(this.uLoc.uChromaColor, ckRgb[0], ckRgb[1], ckRgb[2]);
+      gl.uniform1f(this.uLoc.uChromaSimilarity, clip.chromaKey.similarity);
+      gl.uniform1f(this.uLoc.uChromaSmoothness, clip.chromaKey.smoothness);
+      gl.uniform1f(this.uLoc.uChromaSpill, clip.chromaKey.spillSuppression);
 
-      // Mask
-      const shapeMap: Record<Clip['mask']['shape'], number> = {
-        none: 0,
-        linear: 1,
-        mirror: 2,
-        circle: 3,
-        rectangle: 4,
-        heart: 3,
-        star: 4,
-      };
-      gl.uniform1i(gl.getUniformLocation(this.program, 'uMaskShape'), shapeMap[clip.mask.shape] ?? 0);
-      gl.uniform2f(gl.getUniformLocation(this.program, 'uMaskCenter'), clip.mask.centerX, clip.mask.centerY);
-      gl.uniform2f(gl.getUniformLocation(this.program, 'uMaskSize'), clip.mask.width, clip.mask.height);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uMaskRotation'), clip.mask.rotation);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uMaskFeather'), clip.mask.feather);
-      gl.uniform1i(gl.getUniformLocation(this.program, 'uMaskInverted'), clip.mask.inverted ? 1 : 0);
+      gl.uniform1i(this.uLoc.uMaskShape, MASK_SHAPE_INDEX[clip.mask.shape] ?? 0);
+      gl.uniform2f(this.uLoc.uMaskCenter, clip.mask.centerX, clip.mask.centerY);
+      gl.uniform2f(this.uLoc.uMaskSize, clip.mask.width, clip.mask.height);
+      gl.uniform1f(this.uLoc.uMaskRotation, clip.mask.rotation);
+      gl.uniform1f(this.uLoc.uMaskFeather, clip.mask.feather);
+      gl.uniform1i(this.uLoc.uMaskInverted, clip.mask.inverted ? 1 : 0);
 
-      let fxType = primaryFx ? EFFECT_INDEX[primaryFx.shaderId] ?? 0 : 0;
-      let fxIntensity = primaryFx ? primaryFx.intensity : 0;
+      let fxType = primaryFx && !primaryFx.customFragmentGlsl ? EFFECT_INDEX[primaryFx.shaderId] ?? 0 : 0;
+      let fxIntensity = primaryFx && !primaryFx.customFragmentGlsl ? primaryFx.intensity : 0;
       if (clip.transitionIn && clip.transitionIn.type !== 'none' && clip.transitionIn.type !== 'dissolve') {
         if (localUs < clip.transitionIn.durationUs) {
           const p = 1 - localUs / Math.max(1, clip.transitionIn.durationUs);
@@ -832,19 +967,62 @@ void main() {
           fxIntensity = Math.max(fxIntensity, p);
         }
       }
-      gl.uniform1i(gl.getUniformLocation(this.program, 'uEffectType'), fxType);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uEffectIntensity'), fxIntensity);
-      gl.uniform1f(gl.getUniformLocation(this.program, 'uTimeSec'), playheadUs / 1_000_000);
+      gl.uniform1i(this.uLoc.uEffectType, fxType);
+      gl.uniform1f(this.uLoc.uEffectIntensity, fxIntensity);
+      gl.uniform1f(this.uLoc.uTimeSec, playheadUs / 1_000_000);
 
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
 
     gl.bindVertexArray(null);
 
-    if (project.settings.ambientGlow && activeVisualClips.length > 0) {
-      gl.readPixels(Math.floor(w * 0.5), Math.floor(h * 0.5), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.pixelProbe);
-      return `rgba(${this.pixelProbe[0]}, ${this.pixelProbe[1]}, ${this.pixelProbe[2]}, 0.32)`;
+    if (!options?.skipGlow && project.settings.ambientGlow && activeVisualClips.length > 0) {
+      const now = performance.now();
+      if (now - this.lastGlowSampleAt >= 250) {
+        this.lastGlowSampleAt = now;
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.glowFbo);
+        gl.blitFramebuffer(0, 0, w, h, 0, 0, 4, 4, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowFbo);
+        gl.readPixels(1, 1, 2, 2, gl.RGBA, gl.UNSIGNED_BYTE, this.glowProbe);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        const r = Math.round((this.glowProbe[0] + this.glowProbe[4] + this.glowProbe[8] + this.glowProbe[12]) / 4);
+        const g = Math.round((this.glowProbe[1] + this.glowProbe[5] + this.glowProbe[9] + this.glowProbe[13]) / 4);
+        const b = Math.round((this.glowProbe[2] + this.glowProbe[6] + this.glowProbe[10] + this.glowProbe[14]) / 4);
+        this.cachedGlowCss = `rgba(${r}, ${g}, ${b}, 0.32)`;
+      }
+      return this.cachedGlowCss;
     }
     return null;
+  }
+
+  samplePixelHex(normX: number, normY: number): string {
+    const gl = this.gl;
+    const x = Math.min(this.canvas.width - 1, Math.max(0, Math.round(normX * this.canvas.width)));
+    const y = Math.min(this.canvas.height - 1, Math.max(0, Math.round((1 - normY) * this.canvas.height)));
+    const px = new Uint8Array(4);
+    gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const toHex = (v: number) => v.toString(16).padStart(2, '0');
+    return `#${toHex(px[0])}${toHex(px[1])}${toHex(px[2])}`;
+  }
+
+  dispose(): void {
+    const gl = this.gl;
+    this.clipTextures.forEach((t) => gl.deleteTexture(t));
+    this.clipTextures.clear();
+    this.lutTextures.forEach((e) => gl.deleteTexture(e.tex));
+    this.lutTextures.clear();
+    this.customPrograms.forEach((p) => gl.deleteProgram(p.program));
+    this.customPrograms.clear();
+    gl.deleteTexture(this.curvesTexture);
+    gl.deleteTexture(this.backTexture);
+    gl.deleteTexture(this.customFxTexture);
+    gl.deleteTexture(this.glowTexture);
+    gl.deleteFramebuffer(this.backFbo);
+    gl.deleteFramebuffer(this.customFxFbo);
+    gl.deleteFramebuffer(this.glowFbo);
+    gl.deleteBuffer(this.vbo);
+    gl.deleteVertexArray(this.vao);
+    gl.deleteProgram(this.program);
   }
 }

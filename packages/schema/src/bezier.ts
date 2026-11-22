@@ -143,3 +143,35 @@ export function mapLocalTimelineToSourceUs(clip: Clip, localTimeUs: Microseconds
   }
   return clip.sourceStartUs + sourceDelta;
 }
+
+/**
+ * Compute timeline clip duration in microseconds from sourceDurationUs and SpeedState (uniform or speed curve).
+ */
+export function computeDurationFromSpeed(sourceDurationUs: Microseconds, speed: Clip['speed']): Microseconds {
+  if (speed.mode === 'uniform') {
+    const rate = Math.max(0.1, speed.rate || 1);
+    return Math.max(200_000, Math.round(sourceDurationUs / rate));
+  }
+  const pts = [...(speed.curvePoints ?? [])].sort((a, b) => a.position - b.position);
+  if (pts.length === 0) return sourceDurationUs;
+  const sampleSpeed = (u: number): number => {
+    if (u <= pts[0].position) return Math.max(0.1, pts[0].speed);
+    if (u >= pts[pts.length - 1].position) return Math.max(0.1, pts[pts.length - 1].speed);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i];
+      const b = pts[i + 1];
+      if (u >= a.position && u <= b.position) {
+        const t = (u - a.position) / Math.max(1e-6, b.position - a.position);
+        return Math.max(0.1, a.speed + (b.speed - a.speed) * t);
+      }
+    }
+    return 1;
+  };
+  const steps = 32;
+  const dt = 1 / steps;
+  let avgSpeedIntegral = 0;
+  for (let i = 0; i < steps; i++) {
+    avgSpeedIntegral += 0.5 * (sampleSpeed(i * dt) + sampleSpeed((i + 1) * dt)) * dt;
+  }
+  return Math.max(200_000, Math.round(sourceDurationUs / Math.max(0.1, avgSpeedIntegral)));
+}

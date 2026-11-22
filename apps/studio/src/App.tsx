@@ -1,22 +1,37 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Bot,
   Cpu,
   Download,
   FolderPlus,
+  History,
+  PanelLeftClose,
+  PanelRightClose,
   Redo2,
   Undo2,
 } from 'lucide-react';
 import type { AspectRatioPreset } from '@t-capcut/schema';
 import { ChatCutModal } from './components/ChatCutModal';
 import { ExportModal } from './components/ExportModal';
+import { HistoryDrawer } from './components/HistoryDrawer';
 import { LeftStudioPanel } from './components/LeftStudioPanel';
 import { PlayerViewport } from './components/PlayerViewport';
 import { RightInspector } from './components/RightInspector';
 import { TimelineCanvas } from './components/TimelineCanvas';
+import { playbackClock } from './engine/PlaybackClock';
 import { useEditorStore } from './store/useEditorStore';
 
 const RATIOS: Array<Exclude<AspectRatioPreset, 'custom'>> = ['16:9', '9:16', '1:1', '4:3', '2.35:1'];
+
+function readNumStorage(key: string, fallback: number): number {
+  try {
+    const v = Number(localStorage.getItem(key));
+    return Number.isFinite(v) && v > 100 ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export const App: React.FC = () => {
   const init = useEditorStore((s) => s.init);
@@ -24,6 +39,8 @@ export const App: React.FC = () => {
   const projectsList = useEditorStore((s) => s.projectsList);
   const busyTask = useEditorStore((s) => s.busyTask);
   const statusMessage = useEditorStore((s) => s.statusMessage);
+  const errorMessage = useEditorStore((s) => s.errorMessage);
+  const historyDrawerOpen = useEditorStore((s) => s.historyDrawerOpen);
 
   const selectProject = useEditorStore((s) => s.selectProject);
   const createProject = useEditorStore((s) => s.createProject);
@@ -31,22 +48,56 @@ export const App: React.FC = () => {
   const redo = useEditorStore((s) => s.redo);
   const setAspectRatio = useEditorStore((s) => s.setAspectRatio);
   const toggleProxyMode = useEditorStore((s) => s.toggleProxyMode);
+  const setHistoryDrawerOpen = useEditorStore((s) => s.setHistoryDrawerOpen);
   const setChatCutOpen = useEditorStore((s) => s.setChatCutOpen);
   const setExportModalOpen = useEditorStore((s) => s.setExportModalOpen);
   const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
+  const setErrorMessage = useEditorStore((s) => s.setErrorMessage);
+
+  const headerRef = useRef<HTMLElement | null>(null);
+  const headerRectRef = useRef<DOMRect | null>(null);
+
+  const [leftWidth, setLeftWidth] = useState(() => readNumStorage('tcapcut_left_w', 316));
+  const [rightWidth, setRightWidth] = useState(() => readNumStorage('tcapcut_right_w', 348));
+  const [timelineHeight, setTimelineHeight] = useState(() => readNumStorage('tcapcut_tl_h', 310));
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+
+  const nativeInsetLeft =
+    typeof window !== 'undefined'
+      ? (window as unknown as { __TCAPCUT_NATIVE__?: { titlebarInsetLeft?: number } }).__TCAPCUT_NATIVE__?.titlebarInsetLeft ?? 0
+      : 0;
 
   useEffect(() => {
     void init();
   }, [init]);
 
-  // Auto-clear status toast
+  // Cache header rect via ResizeObserver so hover specular rim causes ZERO reflow on mousemove
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const updateRect = () => {
+      headerRectRef.current = el.getBoundingClientRect();
+    };
+    updateRect();
+    const ro = new ResizeObserver(updateRect);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   useEffect(() => {
     if (!statusMessage) return;
     const t = setTimeout(() => setStatusMessage(null), 3800);
     return () => clearTimeout(t);
   }, [statusMessage, setStatusMessage]);
 
-  // CapCut Keyboard Shortcuts
+  useEffect(() => {
+    if (!errorMessage) return;
+    const t = setTimeout(() => setErrorMessage(null), 6000);
+    return () => clearTimeout(t);
+  }, [errorMessage, setErrorMessage]);
+
+  // Pro NLE & CapCut Keyboard Shortcuts (Space, J/K/L Shuttle, Arrow Frame Step, I/O, [/], Cmd+B, Cmd+K, Cmd+Z)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -55,31 +106,53 @@ export const App: React.FC = () => {
       }
       const st = useEditorStore.getState();
       const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
 
       if (e.code === 'Space') {
         e.preventDefault();
         st.setIsPlaying(!st.isPlaying);
-      } else if (mod && e.key.toLowerCase() === 'k') {
+      } else if (key === 'j' && !mod) {
+        playbackClock.shuttle('j');
+        useEditorStore.setState({ isPlaying: true });
+      } else if (key === 'k' && !mod) {
+        playbackClock.shuttle('k');
+        useEditorStore.setState({ isPlaying: false, playheadUs: playbackClock.getTimeUs() });
+      } else if (key === 'l' && !mod) {
+        playbackClock.shuttle('l');
+        useEditorStore.setState({ isPlaying: true });
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        playbackClock.stepFrames(e.shiftKey ? -10 : -1, st.project?.settings.fps ?? 30);
+        useEditorStore.setState({ isPlaying: false, playheadUs: playbackClock.getTimeUs() });
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        playbackClock.stepFrames(e.shiftKey ? 10 : 1, st.project?.settings.fps ?? 30);
+        useEditorStore.setState({ isPlaying: false, playheadUs: playbackClock.getTimeUs() });
+      } else if (key === 'i' && !mod) {
+        void st.setInOutPoint('in');
+      } else if (key === 'o' && !mod) {
+        void st.setInOutPoint('out');
+      } else if (mod && key === 'k') {
         e.preventDefault();
         st.setChatCutOpen(!st.chatCutOpen);
-      } else if (mod && e.key.toLowerCase() === 'b') {
+      } else if (mod && key === 'b') {
         e.preventDefault();
         void st.splitClipAtPlayhead();
-      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'z') {
+      } else if (mod && e.shiftKey && key === 'z') {
         e.preventDefault();
         void st.redo();
-      } else if (mod && e.key.toLowerCase() === 'z') {
+      } else if (mod && key === 'z') {
         e.preventDefault();
         void st.undo();
-      } else if (e.key.toLowerCase() === 'q') {
+      } else if (key === 'q' || e.key === '[') {
         void st.rippleTrimClip('left');
-      } else if (e.key.toLowerCase() === 'w') {
+      } else if (key === 'w' || e.key === ']') {
         void st.rippleTrimClip('right');
-      } else if (e.key.toLowerCase() === 'v') {
+      } else if (key === 'v') {
         st.setTool('select');
-      } else if (e.key.toLowerCase() === 'b' && !mod) {
+      } else if (key === 'b' && !mod) {
         st.setTool('blade');
-      } else if (e.key.toLowerCase() === 'm') {
+      } else if (key === 'm') {
         void st.addMarkerAtPlayhead();
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         void st.deleteSelectedClip();
@@ -89,35 +162,62 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  // Pointer-tracked optical specular rim highlights across Liquid Glass panels
-  const handleShellPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const panels = e.currentTarget.querySelectorAll<HTMLElement>('.liquid-glass-panel');
-    panels.forEach((panel) => {
-      const r = panel.getBoundingClientRect();
-      panel.style.setProperty('--mx', `${e.clientX - r.left}px`);
-      panel.style.setProperty('--my', `${e.clientY - r.top}px`);
-    });
+  const startResize = (axis: 'left' | 'right' | 'timeline', downEvent: React.PointerEvent) => {
+    downEvent.preventDefault();
+    const startX = downEvent.clientX;
+    const startY = downEvent.clientY;
+    const origLeft = leftWidth;
+    const origRight = rightWidth;
+    const origTl = timelineHeight;
+
+    const onMove = (ev: PointerEvent) => {
+      if (axis === 'left') {
+        const next = Math.min(460, Math.max(250, origLeft + (ev.clientX - startX)));
+        setLeftWidth(next);
+        localStorage.setItem('tcapcut_left_w', String(next));
+      } else if (axis === 'right') {
+        const next = Math.min(480, Math.max(290, origRight - (ev.clientX - startX)));
+        setRightWidth(next);
+        localStorage.setItem('tcapcut_right_w', String(next));
+      } else {
+        const next = Math.min(500, Math.max(210, origTl - (ev.clientY - startY)));
+        setTimelineHeight(next);
+        localStorage.setItem('tcapcut_tl_h', String(next));
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   };
 
   return (
     <div
       className={`tcapcut-shell ${project?.settings.coloristMode ? 'colorist-mode' : ''}`}
-      onPointerMove={handleShellPointerMove}
-      style={{ padding: 10, gap: 10 }}
+      style={{ padding: 10, gap: 6 }}
     >
-      {/* Top Obsidian Liquid Glass Header */}
+      {/* Top macOS Tahoe Liquid Glass Navigation Chrome */}
       <header
-        className="liquid-glass-panel titlebar-drag"
+        ref={headerRef}
+        className="liquid-glass-chrome titlebar-drag"
+        onPointerMove={(e) => {
+          const r = headerRectRef.current;
+          if (!r || !headerRef.current) return;
+          headerRef.current.style.setProperty('--mx', `${e.clientX - r.left}px`);
+          headerRef.current.style.setProperty('--my', `${e.clientY - r.top}px`);
+        }}
         style={{
           height: 50,
-          padding: '0 14px',
+          padding: `0 14px 0 ${Math.max(14, nativeInsetLeft)}px`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           flexShrink: 0,
         }}
       >
-        <div className="titlebar-nodrag" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div className="titlebar-nodrag" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <img
             src="/logo.png"
             alt="T-CapCut Logo"
@@ -133,11 +233,11 @@ export const App: React.FC = () => {
             <div style={{ fontSize: 9.5, color: '#67e8f9', letterSpacing: '0.06em' }}>LIQUID GLASS STUDIO</div>
           </div>
 
-          <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 4px' }} />
+          <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
 
           <select
             className="glass-select"
-            style={{ width: 180, padding: '5px 8px' }}
+            style={{ width: 175, padding: '5px 8px' }}
             value={project?.id ?? ''}
             onChange={(e) => void selectProject(e.target.value)}
           >
@@ -148,11 +248,7 @@ export const App: React.FC = () => {
             ))}
           </select>
 
-          <button
-            className="glass-btn"
-            onClick={() => void createProject(`Dự án ${projectsList.length + 1}`)}
-            title="Tạo dự án mới"
-          >
+          <button className="glass-btn" onClick={() => void createProject(`Dự án ${projectsList.length + 1}`)} title="Tạo dự án mới">
             <FolderPlus size={13} />
           </button>
 
@@ -162,10 +258,23 @@ export const App: React.FC = () => {
           <button className="glass-btn" onClick={() => void redo()} title="Redo (Cmd+Shift+Z)">
             <Redo2 size={13} />
           </button>
+          <button
+            className={`glass-btn ${historyDrawerOpen ? 'glass-btn-active' : ''}`}
+            onClick={() => setHistoryDrawerOpen(!historyDrawerOpen)}
+            title="Lịch sử thao tác"
+          >
+            <History size={13} />
+          </button>
         </div>
 
-        <div className="titlebar-nodrag" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Aspect Ratio Switcher */}
+        <div className="titlebar-nodrag" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <button className={`glass-btn ${leftCollapsed ? 'glass-btn-active' : ''}`} onClick={() => setLeftCollapsed(!leftCollapsed)} title="Ẩn/hiện thư viện trái">
+            <PanelLeftClose size={13} />
+          </button>
+          <button className={`glass-btn ${rightCollapsed ? 'glass-btn-active' : ''}`} onClick={() => setRightCollapsed(!rightCollapsed)} title="Ẩn/hiện bảng thuộc tính phải">
+            <PanelRightClose size={13} />
+          </button>
+
           <div style={{ display: 'flex', background: 'rgba(0,0,0,0.35)', padding: 3, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', gap: 2 }}>
             {RATIOS.map((r) => (
               <button
@@ -190,7 +299,7 @@ export const App: React.FC = () => {
           <button
             className={`glass-btn ${project?.settings.proxyEnabled ? 'glass-btn-active' : ''}`}
             onClick={() => void toggleProxyMode()}
-            title="Bật/tắt phát qua Proxy siêu mượt"
+            title="Bật/tắt phát qua Proxy"
           >
             <Cpu size={13} /> Proxy
           </button>
@@ -205,23 +314,35 @@ export const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main 3-Column Studio Workspace */}
-      <div style={{ flex: 1, display: 'flex', gap: 10, minHeight: 0 }}>
-        <LeftStudioPanel />
+      {/* Resizable 3-Column Studio Workspace */}
+      <div style={{ flex: 1, display: 'flex', gap: 0, minHeight: 0 }}>
+        {!leftCollapsed && (
+          <>
+            <LeftStudioPanel widthPx={leftWidth} />
+            <div className="pane-resizer-v" onPointerDown={(e) => startResize('left', e)} />
+          </>
+        )}
         <PlayerViewport />
-        <RightInspector />
+        {!rightCollapsed && (
+          <>
+            <div className="pane-resizer-v" onPointerDown={(e) => startResize('right', e)} />
+            <RightInspector widthPx={rightWidth} />
+          </>
+        )}
       </div>
 
-      {/* Bottom 120Hz Virtualized Liquid Glass Timeline */}
-      <TimelineCanvas />
+      <div className="pane-resizer-h" onPointerDown={(e) => startResize('timeline', e)} />
 
-      {/* Floating Status / Busy Pill */}
+      {/* Bottom 120Hz Virtualized Timeline */}
+      <TimelineCanvas heightPx={timelineHeight} />
+
+      {/* Status Toast */}
       {(busyTask || statusMessage) && (
         <div
           className="liquid-glass-pill"
           style={{
             position: 'fixed',
-            bottom: 336,
+            bottom: timelineHeight + 22,
             left: '50%',
             transform: 'translateX(-50%)',
             padding: '7px 16px',
@@ -235,6 +356,32 @@ export const App: React.FC = () => {
         </div>
       )}
 
+      {/* Error Toast */}
+      {errorMessage && (
+        <div
+          className="liquid-glass-pill"
+          style={{
+            position: 'fixed',
+            top: 66,
+            right: 20,
+            padding: '8px 14px',
+            fontSize: 12,
+            fontWeight: 600,
+            color: '#fda4af',
+            borderColor: 'rgba(251,113,133,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            zIndex: 70,
+          }}
+          onClick={() => setErrorMessage(null)}
+        >
+          <AlertTriangle size={14} color="#fb7185" />
+          <span>{errorMessage}</span>
+        </div>
+      )}
+
+      <HistoryDrawer />
       <ChatCutModal />
       <ExportModal />
     </div>

@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { Diamond, Gauge, Palette, Scissors, Sliders, Volume2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Diamond, FlipHorizontal, FlipVertical, Gauge, Palette, Pipette, Scissors, Sliders, Volume2 } from 'lucide-react';
 import {
   EASING_PRESETS,
+  computeDurationFromSpeed,
+  getScopeTracksAndClips,
   type AudioClipState,
   type BlendMode,
   type MaskShape,
@@ -50,21 +52,33 @@ const HSL_CHANNELS: Array<{ key: string; label: string; color: string }> = [
   { key: 'magenta', label: 'Hồng', color: '#ec4899' },
 ];
 
-export const RightInspector: React.FC = () => {
+interface RightInspectorProps {
+  widthPx?: number;
+}
+
+export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 }) => {
   const project = useEditorStore((s) => s.project);
+  const nestedScopeId = useEditorStore((s) => s.nestedScopeId);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const inspectorTab = useEditorStore((s) => s.inspectorTab);
+  const eyedropperActive = useEditorStore((s) => s.eyedropperActive);
+
   const setInspectorTab = useEditorStore((s) => s.setInspectorTab);
+  const setEyedropperActive = useEditorStore((s) => s.setEyedropperActive);
+  const previewSelectedClip = useEditorStore((s) => s.previewSelectedClip);
+  const commitCurrentProject = useEditorStore((s) => s.commitCurrentProject);
   const updateSelectedClip = useEditorStore((s) => s.updateSelectedClip);
   const addKeyframeAtPlayhead = useEditorStore((s) => s.addKeyframeAtPlayhead);
 
   const [curveChannel, setCurveChannel] = useState<'master' | 'red' | 'green' | 'blue'>('master');
   const [hslChannel, setHslChannel] = useState<string>('red');
+  const draggingSpeedIdx = useRef<number | null>(null);
 
-  const clip = project && selectedClipId ? project.clips[selectedClipId] : null;
+  const scope = project ? getScopeTracksAndClips(project, nestedScopeId) : null;
+  const clip = scope && selectedClipId ? scope.clips[selectedClipId] : null;
 
   return (
-    <div className="liquid-glass-panel" style={{ width: 344, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+    <div className="nle-content-surface" style={{ width: widthPx, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', flexShrink: 0 }}>
       <div style={{ display: 'flex', gap: 3, padding: 8, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         {INSPECTOR_TABS.map((t) => (
           <button
@@ -87,7 +101,7 @@ export const RightInspector: React.FC = () => {
         ) : (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>{clip.name}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 230 }}>{clip.name}</span>
               <span className="mono" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 6, background: 'rgba(255,255,255,0.08)' }}>
                 {clip.kind.toUpperCase()}
               </span>
@@ -102,13 +116,14 @@ export const RightInspector: React.FC = () => {
                   value={clip.text.text}
                   onChange={(e) => {
                     const v = e.target.value;
-                    void updateSelectedClip('Sửa nội dung Text', (c) => {
+                    previewSelectedClip((c) => {
                       if (c.text) {
                         c.text.text = v;
                         c.name = v.slice(0, 24);
                       }
                     });
                   }}
+                  onBlur={() => void commitCurrentProject('Sửa nội dung Text')}
                 />
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <span style={{ fontSize: 11 }}>Cỡ chữ</span>
@@ -120,10 +135,11 @@ export const RightInspector: React.FC = () => {
                     value={clip.text.fontSize}
                     onChange={(e) => {
                       const sz = Number(e.target.value);
-                      void updateSelectedClip('Cỡ chữ', (c) => {
+                      previewSelectedClip((c) => {
                         if (c.text) c.text.fontSize = sz;
                       });
                     }}
+                    onPointerUp={() => void commitCurrentProject('Chỉnh cỡ chữ')}
                   />
                   <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
                     <input
@@ -201,7 +217,7 @@ export const RightInspector: React.FC = () => {
                       value={item.val}
                       onChange={(e) => {
                         const v = Number(e.target.value);
-                        void updateSelectedClip(`Chỉnh ${item.label}`, (c) => {
+                        previewSelectedClip((c) => {
                           if (item.prop === 'scaleX') {
                             c.transform.scaleX = v;
                             c.transform.scaleY = v;
@@ -210,9 +226,70 @@ export const RightInspector: React.FC = () => {
                           }
                         });
                       }}
+                      onPointerUp={() => void commitCurrentProject(`Chỉnh ${item.label}`)}
                     />
                   </div>
                 ))}
+
+                {/* Flip H / V */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  <button
+                    className={`glass-btn ${clip.transform.flipH ? 'glass-btn-active' : ''}`}
+                    onClick={() =>
+                      void updateSelectedClip('Lật ngang Flip H', (c) => {
+                        c.transform.flipH = !c.transform.flipH;
+                      })
+                    }
+                  >
+                    <FlipHorizontal size={13} /> Flip Ngang
+                  </button>
+                  <button
+                    className={`glass-btn ${clip.transform.flipV ? 'glass-btn-active' : ''}`}
+                    onClick={() =>
+                      void updateSelectedClip('Lật dọc Flip V', (c) => {
+                        c.transform.flipV = !c.transform.flipV;
+                      })
+                    }
+                  >
+                    <FlipVertical size={13} /> Flip Dọc
+                  </button>
+                </div>
+
+                {/* Crop 4 Edges */}
+                <div style={{ padding: 9, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600 }}>Cắt Khung Hình (Crop L/R/T/B)</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                    {(
+                      [
+                        { label: 'Trái', key: 'cropLeft' },
+                        { label: 'Phải', key: 'cropRight' },
+                        { label: 'Trên', key: 'cropTop' },
+                        { label: 'Dưới', key: 'cropBottom' },
+                      ] as const
+                    ).map((cr) => (
+                      <div key={cr.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
+                          {cr.label}: {Math.round(clip.transform[cr.key] * 100)}%
+                        </span>
+                        <input
+                          type="range"
+                          className="glass-slider"
+                          min={0}
+                          max={0.45}
+                          step={0.01}
+                          value={clip.transform[cr.key]}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            previewSelectedClip((c) => {
+                              c.transform[cr.key] = v;
+                            });
+                          }}
+                          onPointerUp={() => void commitCurrentProject(`Crop ${cr.label}`)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <label style={{ fontSize: 11 }}>Chế độ hòa trộn (Blend Mode)</label>
@@ -315,10 +392,11 @@ export const RightInspector: React.FC = () => {
                       value={clip.colorGrade[item.key]}
                       onChange={(e) => {
                         const v = Number(e.target.value);
-                        void updateSelectedClip(`Màu ${item.label}`, (c) => {
+                        previewSelectedClip((c) => {
                           c.colorGrade[item.key] = v;
                         });
                       }}
+                      onPointerUp={() => void commitCurrentProject(`Màu ${item.label}`)}
                     />
                   </div>
                 ))}
@@ -326,7 +404,7 @@ export const RightInspector: React.FC = () => {
                 {/* RGB Curves Editor */}
                 <div style={{ padding: 10, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontSize: 11, fontWeight: 600 }}>RGB Curves</span>
+                    <span style={{ fontSize: 11, fontWeight: 600 }}>RGB Curves (Click thêm / kéo)</span>
                     <div style={{ display: 'flex', gap: 4 }}>
                       {(['master', 'red', 'green', 'blue'] as const).map((ch) => (
                         <button
@@ -376,7 +454,7 @@ export const RightInspector: React.FC = () => {
                         <line x1="0" y1="100" x2="100" y2="0" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
                         <polyline points={poly} fill="none" stroke={stroke} strokeWidth="2.2" />
                         {pts.map(([px, py], i) => (
-                          <circle key={i} cx={px * 100} cy={(1 - py) * 100} r="3" fill={stroke} />
+                          <circle key={i} cx={px * 100} cy={(1 - py) * 100} r="3.4" fill={stroke} />
                         ))}
                       </svg>
                     );
@@ -431,13 +509,14 @@ export const RightInspector: React.FC = () => {
                           value={val}
                           onChange={(e) => {
                             const v = Number(e.target.value);
-                            void updateSelectedClip(`HSL ${hslChannel}.${prop}`, (c) => {
+                            previewSelectedClip((c) => {
                               c.colorGrade.hsl[hslChannel] = {
                                 ...(c.colorGrade.hsl[hslChannel] ?? { hue: 0, sat: 0, lum: 0 }),
                                 [prop]: v,
                               };
                             });
                           }}
+                          onPointerUp={() => void commitCurrentProject(`HSL ${hslChannel}.${prop}`)}
                         />
                       </div>
                     );
@@ -456,10 +535,11 @@ export const RightInspector: React.FC = () => {
                       value={clip.colorGrade.lutIntensity}
                       onChange={(e) => {
                         const v = Number(e.target.value);
-                        void updateSelectedClip('LUT Intensity', (c) => {
+                        previewSelectedClip((c) => {
                           c.colorGrade.lutIntensity = v;
                         });
                       }}
+                      onPointerUp={() => void commitCurrentProject('LUT Intensity')}
                     />
                   </div>
                 )}
@@ -484,10 +564,11 @@ export const RightInspector: React.FC = () => {
                               value={clip.colorGrade.wheels[wheel][idx]}
                               onChange={(e) => {
                                 const val = Number(e.target.value);
-                                void updateSelectedClip(`Wheel ${wheel} ${ch}`, (c) => {
+                                previewSelectedClip((c) => {
                                   c.colorGrade.wheels[wheel][idx] = val;
                                 });
                               }}
+                              onPointerUp={() => void commitCurrentProject(`Wheel ${wheel} ${ch}`)}
                             />
                           </div>
                         ))}
@@ -516,16 +597,25 @@ export const RightInspector: React.FC = () => {
                   </label>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
                     <span>Màu khóa</span>
-                    <input
-                      type="color"
-                      value={clip.chromaKey.colorHex}
-                      onChange={(e) => {
-                        const hex = e.target.value;
-                        void updateSelectedClip('Chroma Color', (c) => {
-                          c.chromaKey.colorHex = hex;
-                        });
-                      }}
-                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button
+                        className={`glass-btn ${eyedropperActive ? 'glass-btn-active' : ''}`}
+                        style={{ padding: '4px 8px', fontSize: 10.5 }}
+                        onClick={() => setEyedropperActive(!eyedropperActive)}
+                      >
+                        <Pipette size={11} /> Hút màu
+                      </button>
+                      <input
+                        type="color"
+                        value={clip.chromaKey.colorHex}
+                        onChange={(e) => {
+                          const hex = e.target.value;
+                          void updateSelectedClip('Chroma Color', (c) => {
+                            c.chromaKey.colorHex = hex;
+                          });
+                        }}
+                      />
+                    </div>
                   </div>
                   <div style={{ fontSize: 11 }}>Độ tương đồng ({clip.chromaKey.similarity.toFixed(2)})</div>
                   <input
@@ -537,10 +627,43 @@ export const RightInspector: React.FC = () => {
                     value={clip.chromaKey.similarity}
                     onChange={(e) => {
                       const v = Number(e.target.value);
-                      void updateSelectedClip('Chroma Similarity', (c) => {
+                      previewSelectedClip((c) => {
                         c.chromaKey.similarity = v;
                       });
                     }}
+                    onPointerUp={() => void commitCurrentProject('Chroma Similarity')}
+                  />
+                  <div style={{ fontSize: 11 }}>Làm mịn viền ({clip.chromaKey.smoothness.toFixed(2)})</div>
+                  <input
+                    type="range"
+                    className="glass-slider"
+                    min={0.01}
+                    max={0.6}
+                    step={0.01}
+                    value={clip.chromaKey.smoothness}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      previewSelectedClip((c) => {
+                        c.chromaKey.smoothness = v;
+                      });
+                    }}
+                    onPointerUp={() => void commitCurrentProject('Chroma Smoothness')}
+                  />
+                  <div style={{ fontSize: 11 }}>Khử ám viền Spill ({clip.chromaKey.spillSuppression.toFixed(2)})</div>
+                  <input
+                    type="range"
+                    className="glass-slider"
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={clip.chromaKey.spillSuppression}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      previewSelectedClip((c) => {
+                        c.chromaKey.spillSuppression = v;
+                      });
+                    }}
+                    onPointerUp={() => void commitCurrentProject('Chroma Spill Suppression')}
                   />
                 </div>
 
@@ -559,6 +682,8 @@ export const RightInspector: React.FC = () => {
                     <option value="none">Không dùng Mask</option>
                     <option value="circle">Hình Tròn (Circle)</option>
                     <option value="rectangle">Hình Chữ Nhật (Rect)</option>
+                    <option value="heart">Trái Tim (Heart SDF)</option>
+                    <option value="star">Ngôi Sao (Star SDF)</option>
                     <option value="linear">Chia đôi (Linear)</option>
                     <option value="mirror">Gương (Mirror)</option>
                   </select>
@@ -572,11 +697,79 @@ export const RightInspector: React.FC = () => {
                     value={clip.mask.feather}
                     onChange={(e) => {
                       const v = Number(e.target.value);
-                      void updateSelectedClip('Mask Feather', (c) => {
+                      previewSelectedClip((c) => {
                         c.mask.feather = v;
                       });
                     }}
+                    onPointerUp={() => void commitCurrentProject('Mask Feather')}
                   />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                    <div>
+                      <div style={{ fontSize: 10 }}>Rộng ({clip.mask.width.toFixed(2)})</div>
+                      <input
+                        type="range"
+                        className="glass-slider"
+                        min={0.1}
+                        max={1}
+                        step={0.02}
+                        value={clip.mask.width}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          previewSelectedClip((c) => {
+                            c.mask.width = v;
+                          });
+                        }}
+                        onPointerUp={() => void commitCurrentProject('Mask Width')}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10 }}>Cao ({clip.mask.height.toFixed(2)})</div>
+                      <input
+                        type="range"
+                        className="glass-slider"
+                        min={0.1}
+                        max={1}
+                        step={0.02}
+                        value={clip.mask.height}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          previewSelectedClip((c) => {
+                            c.mask.height = v;
+                          });
+                        }}
+                        onPointerUp={() => void commitCurrentProject('Mask Height')}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11 }}>Xoay Mask ({clip.mask.rotation}°)</div>
+                  <input
+                    type="range"
+                    className="glass-slider"
+                    min={-180}
+                    max={180}
+                    step={1}
+                    value={clip.mask.rotation}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      previewSelectedClip((c) => {
+                        c.mask.rotation = v;
+                      });
+                    }}
+                    onPointerUp={() => void commitCurrentProject('Mask Rotation')}
+                  />
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5 }}>
+                    <input
+                      type="checkbox"
+                      checked={clip.mask.inverted}
+                      onChange={(e) => {
+                        const inv = e.target.checked;
+                        void updateSelectedClip('Đảo Mask', (c) => {
+                          c.mask.inverted = inv;
+                        });
+                      }}
+                    />
+                    Đảo ngược Mask (Invert)
+                  </label>
                 </div>
               </>
             )}
@@ -596,12 +789,13 @@ export const RightInspector: React.FC = () => {
                   value={clip.speed.rate}
                   onChange={(e) => {
                     const rate = Number(e.target.value);
-                    void updateSelectedClip(`Speed ${rate}x`, (c) => {
+                    previewSelectedClip((c) => {
                       c.speed.mode = 'uniform';
                       c.speed.rate = rate;
-                      c.durationUs = Math.max(200_000, Math.round(c.sourceDurationUs / rate));
+                      c.durationUs = computeDurationFromSpeed(c.sourceDurationUs, c.speed);
                     });
                   }}
+                  onPointerUp={() => void commitCurrentProject(`Speed ${clip.speed.rate}x`)}
                 />
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                   <input
@@ -617,6 +811,58 @@ export const RightInspector: React.FC = () => {
                   Phát ngược (Reverse)
                 </label>
 
+                <div style={{ fontSize: 11, fontWeight: 600, marginTop: 4 }}>Đồ thị Speed Curve (Kéo điểm để chỉnh)</div>
+                {(() => {
+                  const pts = [...clip.speed.curvePoints].sort((a, b) => a.position - b.position);
+                  const toY = (spd: number) => 92 - ((Math.min(5, Math.max(0.2, spd)) - 0.2) / 4.8) * 84;
+                  const fromY = (py: number) => Number((0.2 + ((92 - py) / 84) * 4.8).toFixed(2));
+                  const poly = pts.map((p) => `${p.position * 100},${toY(p.speed)}`).join(' ');
+                  return (
+                    <svg
+                      viewBox="0 0 100 100"
+                      style={{ width: '100%', height: 90, background: 'rgba(0,0,0,0.4)', borderRadius: 10 }}
+                      onPointerMove={(e) => {
+                        if (draggingSpeedIdx.current === null) return;
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const y = Math.min(92, Math.max(8, ((e.clientY - rect.top) / rect.height) * 100));
+                        const spd = Math.max(0.2, Math.min(5, fromY(y)));
+                        const idx = draggingSpeedIdx.current;
+                        previewSelectedClip((c) => {
+                          c.speed.mode = 'curve';
+                          c.speed.presetName = 'custom';
+                          const nextPts = [...c.speed.curvePoints].sort((a, b) => a.position - b.position);
+                          if (nextPts[idx]) nextPts[idx] = { ...nextPts[idx], speed: spd };
+                          c.speed.curvePoints = nextPts;
+                          c.durationUs = computeDurationFromSpeed(c.sourceDurationUs, c.speed);
+                        });
+                      }}
+                      onPointerUp={() => {
+                        if (draggingSpeedIdx.current !== null) {
+                          draggingSpeedIdx.current = null;
+                          void commitCurrentProject('Chỉnh Speed Curve');
+                        }
+                      }}
+                    >
+                      <line x1="0" y1={toY(1)} x2="100" y2={toY(1)} stroke="rgba(255,255,255,0.16)" strokeDasharray="3 3" />
+                      <polyline points={poly} fill="none" stroke="#22d3ee" strokeWidth="2.2" />
+                      {pts.map((pt, i) => (
+                        <circle
+                          key={i}
+                          cx={pt.position * 100}
+                          cy={toY(pt.speed)}
+                          r="4"
+                          fill="#fbbf24"
+                          style={{ cursor: 'ns-resize' }}
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            draggingSpeedIdx.current = i;
+                          }}
+                        />
+                      ))}
+                    </svg>
+                  );
+                })()}
+
                 <div style={{ fontSize: 11, fontWeight: 600, marginTop: 4 }}>Speed Curve Presets (Chuẩn CapCut)</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                   {SPEED_PRESETS.map((sp) => (
@@ -628,6 +874,7 @@ export const RightInspector: React.FC = () => {
                           c.speed.mode = 'curve';
                           c.speed.presetName = sp.id;
                           c.speed.curvePoints = sp.points;
+                          c.durationUs = computeDurationFromSpeed(c.sourceDurationUs, c.speed);
                         })
                       }
                     >
@@ -641,7 +888,7 @@ export const RightInspector: React.FC = () => {
             {inspectorTab === 'audio' && (
               <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                  <span>Âm lượng</span>
+                  <span>Âm lượng (Live WebAudio)</span>
                   <span className="mono">{Math.round(clip.audio.volume * 100)}%</span>
                 </div>
                 <input
@@ -653,10 +900,31 @@ export const RightInspector: React.FC = () => {
                   value={clip.audio.volume}
                   onChange={(e) => {
                     const vol = Number(e.target.value);
-                    void updateSelectedClip('Âm lượng', (c) => {
+                    previewSelectedClip((c) => {
                       c.audio.volume = vol;
                     });
                   }}
+                  onPointerUp={() => void commitCurrentProject('Chỉnh âm lượng')}
+                />
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span>Cân bằng Pan (L / R)</span>
+                  <span className="mono">{clip.audio.pan === 0 ? 'Center' : clip.audio.pan.toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  className="glass-slider"
+                  min={-1}
+                  max={1}
+                  step={0.05}
+                  value={clip.audio.pan}
+                  onChange={(e) => {
+                    const pan = Number(e.target.value);
+                    previewSelectedClip((c) => {
+                      c.audio.pan = pan;
+                    });
+                  }}
+                  onPointerUp={() => void commitCurrentProject('Audio Pan')}
                 />
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
@@ -673,10 +941,11 @@ export const RightInspector: React.FC = () => {
                     value={clip.audio.fadeInUs}
                     onChange={(e) => {
                       const v = Number(e.target.value);
-                      void updateSelectedClip('Fade In', (c) => {
+                      previewSelectedClip((c) => {
                         c.audio.fadeInUs = v;
                       });
                     }}
+                    onPointerUp={() => void commitCurrentProject('Fade In')}
                   />
                   <input
                     type="range"
@@ -687,10 +956,11 @@ export const RightInspector: React.FC = () => {
                     value={clip.audio.fadeOutUs}
                     onChange={(e) => {
                       const v = Number(e.target.value);
-                      void updateSelectedClip('Fade Out', (c) => {
+                      previewSelectedClip((c) => {
                         c.audio.fadeOutUs = v;
                       });
                     }}
+                    onPointerUp={() => void commitCurrentProject('Fade Out')}
                   />
                 </div>
 
@@ -726,7 +996,7 @@ export const RightInspector: React.FC = () => {
                       });
                     }}
                   />
-                  Khử tiếng ồn AI (FFmpeg FFT)
+                  Khử tiếng ồn AI (RNNoise / FFmpeg FFT)
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                   <input
