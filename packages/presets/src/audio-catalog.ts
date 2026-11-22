@@ -15,6 +15,11 @@ export interface AudioPreset {
   durationSec: number;
   filename: string;
   beatsUs: number[];
+  structure?: {
+    introEndUs: number;
+    dropUs: number;
+    outroStartUs: number;
+  };
 }
 
 function buildBeatGrid(bpm: number, durationSec: number): number[] {
@@ -49,31 +54,31 @@ export const AUDIO_SFX_CATEGORIES: Array<{ id: SfxCategory | 'all'; label: strin
 
 const RAW_MUSIC: Array<Omit<AudioPreset, 'kind' | 'beatsUs'>> = [
   // Lo-Fi Chill (3)
-  { id: 'mus_lofi_midnight', category: 'lofi', categoryLabel: 'Lo-Fi Chill', name: 'Midnight Study Rhodes', desc: 'Hợp âm Rhodes ấm + vinyl crackle nhẹ 84 BPM', bpm: 84, durationSec: 20, filename: 'mus_lofi_midnight.m4a' },
-  { id: 'mus_lofi_rainy', category: 'lofi', categoryLabel: 'Lo-Fi Chill', name: 'Rainy Saigon Cafe', desc: 'Lo-Fi piano thư giãn hợp Daily Vlog 78 BPM', bpm: 78, durationSec: 20, filename: 'mus_lofi_rainy.m4a' },
-  { id: 'mus_lofi_sunset', category: 'lofi', categoryLabel: 'Lo-Fi Chill', name: 'Golden Sunset Tape', desc: 'Âm hưởng tape analog êm dịu 90 BPM', bpm: 90, durationSec: 20, filename: 'mus_lofi_sunset.m4a' },
+  { id: 'mus_lofi_midnight', category: 'lofi', categoryLabel: 'Lo-Fi Chill', name: 'Midnight Study Rhodes', desc: 'Hợp âm Rhodes ấm + vinyl crackle + Reverb Studio 84 BPM', bpm: 84, durationSec: 44, filename: 'mus_lofi_midnight.m4a' },
+  { id: 'mus_lofi_rainy', category: 'lofi', categoryLabel: 'Lo-Fi Chill', name: 'Rainy Saigon Cafe', desc: 'Lo-Fi piano thư giãn cấu trúc Intro-Verse-Outro 78 BPM', bpm: 78, durationSec: 46, filename: 'mus_lofi_rainy.m4a' },
+  { id: 'mus_lofi_sunset', category: 'lofi', categoryLabel: 'Lo-Fi Chill', name: 'Golden Sunset Tape', desc: 'Âm hưởng tape analog êm dịu + stereo chorus 90 BPM', bpm: 90, durationSec: 42, filename: 'mus_lofi_sunset.m4a' },
 
   // Beat-Sync / EDM / Phonk (3)
-  { id: 'mus_beat_tiktok128', category: 'beatsync', categoryLabel: 'Beat-Sync', name: 'Neon TikTok Pulse 128', desc: 'Kick trống dứt khoát từng nhịp 128 BPM cho cut nhanh', bpm: 128, durationSec: 16, filename: 'mus_beat_tiktok128.m4a' },
-  { id: 'mus_beat_drift135', category: 'beatsync', categoryLabel: 'Beat-Sync', name: 'Night Drift Cowbell 135', desc: 'Nhịp bass phonk + synth gắt 135 BPM cho xe/thể thao', bpm: 135, durationSec: 16, filename: 'mus_beat_drift135.m4a' },
-  { id: 'mus_beat_cyber120', category: 'beatsync', categoryLabel: 'Beat-Sync', name: 'Cyber Future Bass 120', desc: 'Synth arp + drop rõ từng phách 120 BPM', bpm: 120, durationSec: 16, filename: 'mus_beat_cyber120.m4a' },
+  { id: 'mus_beat_tiktok128', category: 'beatsync', categoryLabel: 'Beat-Sync', name: 'Neon TikTok Pulse 128', desc: 'Kick trống sidechain + Build-up & Drop bùng nổ 128 BPM', bpm: 128, durationSec: 40, filename: 'mus_beat_tiktok128.m4a' },
+  { id: 'mus_beat_drift135', category: 'beatsync', categoryLabel: 'Beat-Sync', name: 'Night Drift Cowbell 135', desc: 'Nhịp bass phonk + 808 glide + Drop gắt 135 BPM', bpm: 135, durationSec: 40, filename: 'mus_beat_drift135.m4a' },
+  { id: 'mus_beat_cyber120', category: 'beatsync', categoryLabel: 'Beat-Sync', name: 'Cyber Future Bass 120', desc: 'Synth arp + SuperSaw Drop rõ từng phách 120 BPM', bpm: 120, durationSec: 42, filename: 'mus_beat_cyber120.m4a' },
 
   // Vlog Acoustic (3)
-  { id: 'mus_vlog_morning', category: 'vlog', categoryLabel: 'Vlog Acoustic', name: 'Morning Acoustic Pluck', desc: 'Gảy đàn dây tươi sáng, tích cực 104 BPM', bpm: 104, durationSec: 18, filename: 'mus_vlog_morning.m4a' },
-  { id: 'mus_vlog_coastal', category: 'vlog', categoryLabel: 'Vlog Acoustic', name: 'Coastal Breeze Indie', desc: 'Giai điệu du lịch nhẹ nhàng 110 BPM', bpm: 110, durationSec: 18, filename: 'mus_vlog_coastal.m4a' },
-  { id: 'mus_vlog_coffee', category: 'vlog', categoryLabel: 'Vlog Acoustic', name: 'Slow Coffee Strings', desc: 'Hợp âm mộc mạc cho Food & Coffee 96 BPM', bpm: 96, durationSec: 18, filename: 'mus_vlog_coffee.m4a' },
+  { id: 'mus_vlog_morning', category: 'vlog', categoryLabel: 'Vlog Acoustic', name: 'Morning Acoustic Pluck', desc: 'Gảy đàn dây tươi sáng, điệp khúc rộn ràng 104 BPM', bpm: 104, durationSec: 44, filename: 'mus_vlog_morning.m4a' },
+  { id: 'mus_vlog_coastal', category: 'vlog', categoryLabel: 'Vlog Acoustic', name: 'Coastal Breeze Indie', desc: 'Giai điệu du lịch thoáng đãng có Outro mượt 110 BPM', bpm: 110, durationSec: 44, filename: 'mus_vlog_coastal.m4a' },
+  { id: 'mus_vlog_coffee', category: 'vlog', categoryLabel: 'Vlog Acoustic', name: 'Slow Coffee Strings', desc: 'Hợp âm mộc mạc + đàn dây ấm cho Food & Coffee 96 BPM', bpm: 96, durationSec: 45, filename: 'mus_vlog_coffee.m4a' },
 
   // Cinematic (3)
-  { id: 'mus_cine_horizon', category: 'cinematic', categoryLabel: 'Cinematic', name: 'Endless Horizon Pad', desc: 'Pad giao hưởng sâu rộng cho Travel Drone 72 BPM', bpm: 72, durationSec: 20, filename: 'mus_cine_horizon.m4a' },
-  { id: 'mus_cine_piano', category: 'cinematic', categoryLabel: 'Cinematic', name: 'Memories Solo Piano', desc: 'Piano cảm xúc cho Slideshow & Kể chuyện 76 BPM', bpm: 76, durationSec: 20, filename: 'mus_cine_piano.m4a' },
-  { id: 'mus_cine_epic', category: 'cinematic', categoryLabel: 'Cinematic', name: 'Titan Riser Pulse', desc: 'Nhịp trầm hùng ép cao trào trailer 100 BPM', bpm: 100, durationSec: 18, filename: 'mus_cine_epic.m4a' },
+  { id: 'mus_cine_horizon', category: 'cinematic', categoryLabel: 'Cinematic', name: 'Endless Horizon Pad', desc: 'Pad giao hưởng sâu rộng + Sub Taiko cho Drone 72 BPM', bpm: 72, durationSec: 48, filename: 'mus_cine_horizon.m4a' },
+  { id: 'mus_cine_piano', category: 'cinematic', categoryLabel: 'Cinematic', name: 'Memories Solo Piano', desc: 'Grand Piano cảm xúc kèm hồi âm Hall cho Kể chuyện 76 BPM', bpm: 76, durationSec: 46, filename: 'mus_cine_piano.m4a' },
+  { id: 'mus_cine_epic', category: 'cinematic', categoryLabel: 'Cinematic', name: 'Titan Riser Pulse', desc: 'Nhịp trầm hùng ép cao trào + Braam Trailer 100 BPM', bpm: 100, durationSec: 44, filename: 'mus_cine_epic.m4a' },
 
   // Corporate Tech (2)
-  { id: 'mus_tech_review', category: 'corporate', categoryLabel: 'Tech / Review', name: 'Clean Tech Minimal', desc: 'Nhạc nền hiện đại cho Review sản phẩm/đồ công nghệ 112 BPM', bpm: 112, durationSec: 18, filename: 'mus_tech_review.m4a' },
-  { id: 'mus_tech_studio', category: 'corporate', categoryLabel: 'Tech / Review', name: 'Podcast Talk Bed', desc: 'Nhịp nền tinh tế không lấn giọng nói 92 BPM', bpm: 92, durationSec: 20, filename: 'mus_tech_studio.m4a' },
+  { id: 'mus_tech_review', category: 'corporate', categoryLabel: 'Tech / Review', name: 'Clean Tech Minimal', desc: 'Nhạc nền hiện đại cho Review sản phẩm/công nghệ 112 BPM', bpm: 112, durationSec: 42, filename: 'mus_tech_review.m4a' },
+  { id: 'mus_tech_studio', category: 'corporate', categoryLabel: 'Tech / Review', name: 'Podcast Talk Bed', desc: 'Nhịp nền tinh tế không lấn giọng nói 92 BPM', bpm: 92, durationSec: 45, filename: 'mus_tech_studio.m4a' },
 
-  // Pop / Promo (1+1 = 15 total)
-  { id: 'mus_pop_flash', category: 'pop', categoryLabel: 'Upbeat Pop', name: 'Flash Sale Groove', desc: 'Nhạc sôi động quảng cáo sản phẩm & Shorts 122 BPM', bpm: 122, durationSec: 16, filename: 'mus_pop_flash.m4a' },
+  // Pop / Promo (15 total)
+  { id: 'mus_pop_flash', category: 'pop', categoryLabel: 'Upbeat Pop', name: 'Flash Sale Groove', desc: 'Nhạc sôi động quảng cáo sản phẩm & Shorts 122 BPM', bpm: 122, durationSec: 40, filename: 'mus_pop_flash.m4a' },
 ];
 
 const RAW_SFX: Array<Omit<AudioPreset, 'kind' | 'bpm' | 'beatsUs'>> = [
@@ -132,6 +137,11 @@ export const AUDIO_MUSIC_CATALOG: AudioPreset[] = RAW_MUSIC.map((m) => ({
   ...m,
   kind: 'music',
   beatsUs: buildBeatGrid(m.bpm, m.durationSec),
+  structure: {
+    introEndUs: Math.round(m.durationSec * 0.18 * US_PER_SEC),
+    dropUs: Math.round(m.durationSec * 0.42 * US_PER_SEC),
+    outroStartUs: Math.round(m.durationSec * 0.84 * US_PER_SEC),
+  },
 }));
 
 export const AUDIO_SFX_CATALOG: AudioPreset[] = RAW_SFX.map((s) => ({

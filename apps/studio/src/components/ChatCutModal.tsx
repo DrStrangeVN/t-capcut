@@ -5,8 +5,9 @@ import { useEditorStore } from '../store/useEditorStore';
 const QUICK_PROMPTS = [
   'Cắt hết khoảng lặng và thêm phụ đề karaoke màu vàng',
   'Chuyển khung hình 9:16 cho TikTok và chỉnh màu cinematic ấm',
-  'Tách cảnh tự động và gắn beat markers',
-  'Khử ồn giọng nói chuẩn Podcast Studio và đặt tốc độ 1.25x',
+  'Tách cảnh tự động, gắn beat markers và Beat-Cut khớp nhịp',
+  'Khử ồn giọng nói Podcast Studio và đưa chữ ra sau chủ thể',
+  'Kịch bản: 3 bí quyết quay vlog đẹp. Ánh sáng tự nhiên luôn thắng. Dùng LUT Kodak 2383 ngay hôm nay.',
 ];
 
 export const ChatCutModal: React.FC = () => {
@@ -48,7 +49,7 @@ export const ChatCutModal: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700 }}>
             <Bot size={18} color="#22d3ee" />
-            <span>T-ChatCut v2 Copilot ({llmConfig ? llmConfig.provider.toUpperCase() : 'Offline Smart Planner'})</span>
+            <span>T-ChatCut v3 Agentic Director ({llmConfig ? llmConfig.provider.toUpperCase() : 'Offline Smart Planner'})</span>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button

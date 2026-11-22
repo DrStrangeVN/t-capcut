@@ -71,6 +71,11 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
   const updateSelectedClip = useEditorStore((s) => s.updateSelectedClip);
   const addKeyframeAtPlayhead = useEditorStore((s) => s.addKeyframeAtPlayhead);
   const applyClipColorAndFxToAll = useEditorStore((s) => s.applyClipColorAndFxToAll);
+  const systemFonts = useEditorStore((s) => s.systemFonts);
+  const setTextBehindSubject = useEditorStore((s) => s.setTextBehindSubject);
+  const translateSelectedSubtitle = useEditorStore((s) => s.translateSelectedSubtitle);
+  const autoColorMatchToPreviousClip = useEditorStore((s) => s.autoColorMatchToPreviousClip);
+  const smartRemixSelectedMusic = useEditorStore((s) => s.smartRemixSelectedMusic);
 
   const [curveChannel, setCurveChannel] = useState<'master' | 'red' | 'green' | 'blue'>('master');
   const [hslChannel, setHslChannel] = useState<string>('red');
@@ -278,6 +283,45 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
                       <option value="shake">Rung Nhẹ Shake</option>
                       <option value="neon-flicker">Chớp Neon</option>
                     </select>
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Font Hệ Thống macOS</label>
+                    <select
+                      className="glass-select"
+                      style={{ fontSize: 10.5 }}
+                      value={clip.text.fontFamily}
+                      onChange={(e) => {
+                        const ff = e.target.value;
+                        void updateSelectedClip(`Đổi font ${ff}`, (c) => {
+                          if (c.text) c.text.fontFamily = ff;
+                        });
+                      }}
+                    >
+                      <option value="Inter, -apple-system, BlinkMacSystemFont, sans-serif">SF Pro / Inter (Mặc định)</option>
+                      {systemFonts.slice(0, 80).map((f) => (
+                        <option key={f} value={`"${f}", sans-serif`}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 6, marginTop: 2 }}>
+                    <button
+                      className={`glass-btn ${clip.text.behindSubject ? 'glass-btn-active' : ''}`}
+                      style={{ flex: 1, fontSize: 10.5 }}
+                      onClick={() => void setTextBehindSubject(clip.id, !clip.text?.behindSubject)}
+                      title="Đưa lớp chữ ra sau người/vật thể tách bằng Apple Vision"
+                    >
+                      {clip.text.behindSubject ? '✓ Chữ Sau Chủ Thể' : 'Chữ Sau Chủ Thể'}
+                    </button>
+                    <button
+                      className="glass-btn"
+                      style={{ flex: 1, fontSize: 10.5 }}
+                      onClick={() => void translateSelectedSubtitle('en')}
+                      title="Thêm phụ đề song ngữ Việt + Anh"
+                    >
+                      Song ngữ VI/EN
+                    </button>
                   </div>
                 </div>
                 <div>
@@ -662,13 +706,16 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
 
             {inspectorTab === 'color' && (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                  <button className="glass-btn" style={{ fontSize: 10.5 }} onClick={() => void applyClipColorAndFxToAll('color')}>
-                    <CopyCheck size={12} color="#22d3ee" /> Áp Màu/LUT All
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 5 }}>
+                  <button className="glass-btn" style={{ fontSize: 10 }} onClick={() => void applyClipColorAndFxToAll('color')}>
+                    <CopyCheck size={11} color="#22d3ee" /> Áp All
+                  </button>
+                  <button className="glass-btn" style={{ fontSize: 10 }} onClick={() => void autoColorMatchToPreviousClip()} title="Tự cân màu khớp clip liền trước">
+                    <Sparkles size={11} color="#a78bfa" /> Match
                   </button>
                   <button
                     className="glass-btn"
-                    style={{ fontSize: 10.5 }}
+                    style={{ fontSize: 10 }}
                     onClick={() =>
                       void updateSelectedClip('Reset Màu & LUT', (c) => {
                         c.colorGrade.exposure = 0;
@@ -685,7 +732,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
                       })
                     }
                   >
-                    <RotateCcw size={12} color="#fb7185" /> Reset Màu/LUT
+                    <RotateCcw size={11} color="#fb7185" /> Reset
                   </button>
                 </div>
                 {clip.colorGrade.lutName && (
@@ -1340,6 +1387,105 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
                   />
                   Auto-Ducking (Sidechain tự nhỏ nhạc)
                 </label>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(clip.audio.compressorEnabled)}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        void updateSelectedClip('Audio Compressor', (c) => {
+                          c.audio.compressorEnabled = val;
+                        });
+                      }}
+                    />
+                    Compressor
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(clip.audio.noiseGateEnabled)}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        void updateSelectedClip('Noise Gate', (c) => {
+                          c.audio.noiseGateEnabled = val;
+                        });
+                      }}
+                    />
+                    Noise Gate
+                  </label>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span>Chỉnh Cao Độ (Pitch Semitones)</span>
+                  <span className="mono">{clip.audio.pitchSemitones ?? 0} st</span>
+                </div>
+                <input
+                  type="range"
+                  className="glass-slider"
+                  min={-12}
+                  max={12}
+                  step={1}
+                  value={clip.audio.pitchSemitones ?? 0}
+                  onChange={(e) => {
+                    const pVal = Number(e.target.value);
+                    previewSelectedClip((c) => {
+                      c.audio.pitchSemitones = pVal;
+                    });
+                  }}
+                  onPointerUp={() => void commitCurrentProject('Chỉnh Pitch Semitones')}
+                />
+
+                <div style={{ padding: 8, borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, fontWeight: 600, marginBottom: 6 }}>
+                    <span>5-Band Parametric EQ (dB)</span>
+                    <button
+                      style={{ background: 'none', border: 'none', color: '#22d3ee', cursor: 'pointer', fontSize: 10 }}
+                      onClick={() =>
+                        void updateSelectedClip('Reset 5-Band EQ', (c) => {
+                          c.audio.eqBands = [0, 0, 0, 0, 0];
+                        })
+                      }
+                    >
+                      Flat
+                    </button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
+                    {(['80', '250', '1k', '4k', '12k'] as const).map((hz, idx) => {
+                      const val = clip.audio.eqBands?.[idx] ?? 0;
+                      return (
+                        <div key={hz} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                          <span className="mono" style={{ fontSize: 9.5, color: '#67e8f9' }}>{val > 0 ? `+${val}` : val}</span>
+                          <input
+                            type="range"
+                            min={-12}
+                            max={12}
+                            step={1}
+                            value={val}
+                            onChange={(e) => {
+                              const gDb = Number(e.target.value);
+                              previewSelectedClip((c) => {
+                                const bands = [...(c.audio.eqBands ?? [0, 0, 0, 0, 0])] as [number, number, number, number, number];
+                                bands[idx] = gDb;
+                                c.audio.eqBands = bands;
+                              });
+                            }}
+                            onPointerUp={() => void commitCurrentProject(`EQ ${hz}Hz`)}
+                            style={{ writingMode: 'vertical-lr', direction: 'rtl', width: 22, height: 64 }}
+                          />
+                          <span className="mono" style={{ fontSize: 9, color: 'var(--text-secondary)' }}>{hz}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {clip.kind === 'audio' && (
+                  <button className="glass-btn glass-btn-primary" style={{ fontSize: 11 }} onClick={() => void smartRemixSelectedMusic()}>
+                    <Sparkles size={13} /> Smart Music Remix (Tự khớp độ dài + Outro)
+                  </button>
+                )}
               </>
             )}
           </>

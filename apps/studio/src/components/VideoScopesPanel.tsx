@@ -15,7 +15,7 @@ export const VideoScopesPanel: React.FC<VideoScopesPanelProps> = ({ sourceCanvas
   const setShowScopes = useEditorStore((s) => s.setShowScopes);
   const scopeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [mode, setMode] = useState<'parade' | 'luma'>('parade');
+  const [mode, setMode] = useState<'parade' | 'luma' | 'vector'>('parade');
 
   useEffect(() => {
     if (!showScopes) return;
@@ -74,7 +74,7 @@ export const VideoScopesPanel: React.FC<VideoScopesPanelProps> = ({ sourceCanvas
             dCtx.fillRect(bx, h - (b / 255) * h, 2, 2);
           }
         }
-      } else {
+      } else if (mode === 'luma') {
         dCtx.fillStyle = 'rgba(34,211,238,0.32)';
         for (let sx = 0; sx < 160; sx += 2) {
           const dx = (sx / 160) * w;
@@ -83,6 +83,30 @@ export const VideoScopesPanel: React.FC<VideoScopesPanelProps> = ({ sourceCanvas
             const luma = 0.2126 * px[idx] + 0.7152 * px[idx + 1] + 0.0722 * px[idx + 2];
             dCtx.fillRect(dx, h - (luma / 255) * h, 2, 2);
           }
+        }
+      } else {
+        const cx = w * 0.5;
+        const cy = h * 0.5;
+        const rad = Math.min(w, h) * 0.44;
+        dCtx.strokeStyle = 'rgba(255,255,255,0.16)';
+        dCtx.beginPath();
+        dCtx.arc(cx, cy, rad, 0, Math.PI * 2);
+        dCtx.stroke();
+        dCtx.strokeStyle = 'rgba(251, 191, 36, 0.45)';
+        dCtx.beginPath();
+        dCtx.moveTo(cx, cy);
+        dCtx.lineTo(cx - rad * 0.54, cy - rad * 0.84);
+        dCtx.stroke();
+        for (let i = 0; i < px.length; i += 16) {
+          const r = px[i] / 255;
+          const g = px[i + 1] / 255;
+          const b = px[i + 2] / 255;
+          const cb = -0.1687 * r - 0.3313 * g + 0.5 * b;
+          const cr = 0.5 * r - 0.4187 * g - 0.0813 * b;
+          const x = cx + cb * rad * 1.9;
+          const y = cy - cr * rad * 1.9;
+          dCtx.fillStyle = `rgba(${px[i]},${px[i + 1]},${px[i + 2]},0.55)`;
+          dCtx.fillRect(x, y, 2, 2);
         }
       }
     };
@@ -133,6 +157,13 @@ export const VideoScopesPanel: React.FC<VideoScopesPanelProps> = ({ sourceCanvas
             onClick={() => setMode('luma')}
           >
             Luma
+          </button>
+          <button
+            className={`glass-btn ${mode === 'vector' ? 'glass-btn-active' : ''}`}
+            style={{ padding: '2px 7px', fontSize: 10 }}
+            onClick={() => setMode('vector')}
+          >
+            Vector
           </button>
           <button className="glass-btn" style={{ padding: '2px 5px' }} onClick={() => setShowScopes(false)}>
             <X size={11} />

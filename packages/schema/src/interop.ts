@@ -1,4 +1,18 @@
-import { type Clip, type Project, type TranscriptSegment, US_PER_SEC } from './types.js';
+import {
+  type Clip,
+  type MediaAsset,
+  type Project,
+  type TranscriptSegment,
+  US_PER_SEC,
+  createDefaultAudioState,
+  createDefaultChromaKey,
+  createDefaultColorGrade,
+  createDefaultMask,
+  createDefaultSpeed,
+  createDefaultTextStyle,
+  createDefaultTransform,
+  createEmptyProject,
+} from './types.js';
 
 function escapeXml(str: string): string {
   return str
@@ -9,13 +23,45 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;');
 }
 
+function unescapeXml(str: string): string {
+  return str
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
 function toRationalTime(us: number, fps: number): string {
   const frames = Math.round((us / US_PER_SEC) * fps);
   return `${frames}/${fps}s`;
 }
 
+function parseRationalTimeUs(str: string | undefined): number {
+  if (!str) return 0;
+  const clean = str.trim().replace(/s$/i, '');
+  if (clean.includes('/')) {
+    const [num, den] = clean.split('/').map(Number);
+    if (Number.isFinite(num) && Number.isFinite(den) && den > 0) {
+      return Math.round((num / den) * US_PER_SEC);
+    }
+  }
+  const sec = Number(clean);
+  return Number.isFinite(sec) ? Math.round(sec * US_PER_SEC) : 0;
+}
+
+function parseXmlAttrs(tag: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const re = /([a-zA-Z0-9_:-]+)\s*=\s*"([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(tag)) !== null) {
+    attrs[m[1]!] = unescapeXml(m[2]!);
+  }
+  return attrs;
+}
+
 /**
- * Export project to Final Cut Pro FCPXML 1.11 (compatible with Final Cut Pro & DaVinci Resolve).
+ * Export project to Multi-Track Final Cut Pro FCPXML 1.11 (compatible with Final Cut Pro & DaVinci Resolve).
  */
 export function exportToFCPXML(project: Project): string {
   const fps = Math.max(1, project.settings.fps || 30);
@@ -26,18 +72,41 @@ export function exportToFCPXML(project: Project): string {
     )
     .join('\n');
 
-  const allClips = Object.values(project.clips);
+  const allClips = Object.values(project.clips).filter((c) => !c.disabled);
   const totalUs = allClips.reduce((acc, c) => Math.max(acc, c.timelineStartUs + c.durationUs), 0);
   const mainTrack = project.tracks.find((t) => t.isMain) ?? project.tracks[0];
   const mainClips = allClips
     .filter((c) => c.trackId === mainTrack?.id)
     .sort((a, b) => a.timelineStartUs - b.timelineStartUs);
 
+  const connectedClips = allClips
+    .filter((c) => c.trackId !== mainTrack?.id)
+    .sort((a, b) => a.timelineStartUs - b.timelineStartUs);
+
+  const connectedXml = connectedClips
+    .map((c) => {
+      if (c.kind === 'text' && c.text) {
+        return `          <title ref="r2" lane="2" offset="${toRationalTime(c.timelineStartUs, fps)}" name="${escapeXml(c.text.text)}" duration="${toRationalTime(c.durationUs, fps)}"><text>${escapeXml(c.text.text)}</text></title>`;
+      }
+      if (!c.assetId) return '';
+      const lane = c.kind === 'audio' ? '-1' : '1';
+      return `          <asset-clip ref="${escapeXml(c.assetId)}" lane="${lane}" offset="${toRationalTime(c.timelineStartUs, fps)}" name="${escapeXml(c.name)}" duration="${toRationalTime(c.durationUs, fps)}" start="${toRationalTime(c.sourceStartUs, fps)}" />`;
+    })
+    .filter(Boolean)
+    .join('\n');
+
   const spineClipsXml = mainClips
-    .map(
-      (c) =>
-        `          <asset-clip ref="${escapeXml(c.assetId ?? c.id)}" offset="${toRationalTime(c.timelineStartUs, fps)}" name="${escapeXml(c.name)}" duration="${toRationalTime(c.durationUs, fps)}" start="${toRationalTime(c.sourceStartUs, fps)}" />`
-    )
+    .map((c, idx) => {
+      const transXml = c.transitionIn
+        ? `            <transition name="${escapeXml(c.transitionIn.name)}" duration="${toRationalTime(c.transitionIn.durationUs, fps)}" />\n`
+        : '';
+      const extraConnected = idx === 0 && connectedXml ? `\n${connectedXml}\n          ` : '';
+      return `${transXml}          <asset-clip ref="${escapeXml(c.assetId ?? c.id)}" offset="${toRationalTime(c.timelineStartUs, fps)}" name="${escapeXml(c.name)}" duration="${toRationalTime(c.durationUs, fps)}" start="${toRationalTime(c.sourceStartUs, fps)}">${extraConnected}</asset-clip>`;
+    })
+    .join('\n');
+
+  const markersXml = (project.markers ?? [])
+    .map((m) => `          <marker start="${toRationalTime(m.timeUs, fps)}" duration="1/${fps}s" value="${escapeXml(m.label)}" />`)
     .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -45,6 +114,7 @@ export function exportToFCPXML(project: Project): string {
 <fcpxml version="1.11">
   <resources>
     <format id="r1" name="FFVideoFormat${project.settings.height}p${fps}" frameDuration="1/${fps}s" width="${project.settings.width}" height="${project.settings.height}" />
+    <effect id="r2" name="Basic Title" uid=".../Titles.localized/Bumper:Opener.localized/Basic Title.localized/Basic Title.moti" />
 ${assetsXml}
   </resources>
   <library>
@@ -53,12 +123,289 @@ ${assetsXml}
         <sequence format="r1" duration="${toRationalTime(totalUs, fps)}">
           <spine>
 ${spineClipsXml}
+${markersXml}
           </spine>
         </sequence>
       </project>
     </event>
   </library>
 </fcpxml>`;
+}
+
+/**
+ * Import Final Cut Pro / DaVinci Resolve FCPXML (.fcpxml) multi-track sequence into a T-CapCut Project.
+ */
+export function importFromFCPXML(xmlContent: string, projectId?: string): Project {
+  const projNameMatch = xmlContent.match(/<project[^>]*\bname="([^"]+)"/i);
+  const project = createEmptyProject(projectId || `proj_fcpxml_${Date.now()}`, projNameMatch ? unescapeXml(projNameMatch[1]!) : 'Imported FCPXML');
+
+  const formatMatch = xmlContent.match(/<format\b([^>]+)\/?>/i);
+  if (formatMatch) {
+    const attrs = parseXmlAttrs(formatMatch[1]!);
+    if (attrs.width) project.settings.width = Number(attrs.width) || 1920;
+    if (attrs.height) project.settings.height = Number(attrs.height) || 1080;
+    if (attrs.frameDuration) {
+      const m = attrs.frameDuration.match(/1\/(\d+)s/);
+      if (m) project.settings.fps = Number(m[1]) || 30;
+    }
+    const r = project.settings.width / Math.max(1, project.settings.height);
+    project.settings.aspectRatio = r < 0.75 ? '9:16' : Math.abs(r - 1) < 0.1 ? '1:1' : r > 2.1 ? '2.35:1' : '16:9';
+  }
+
+  const assetRe = /<asset\b([^>]*)(?:\/>|>[\s\S]*?<\/asset>)/gi;
+  let am: RegExpExecArray | null;
+  while ((am = assetRe.exec(xmlContent)) !== null) {
+    const attrs = parseXmlAttrs(am[1]!);
+    if (!attrs.id) continue;
+    const rawSrc = (attrs.src || '').replace(/^file:\/\//i, '');
+    let decodedSrc = rawSrc;
+    try {
+      decodedSrc = decodeURI(rawSrc);
+    } catch {
+      // keep raw
+    }
+    const hasVideo = attrs.hasVideo !== '0';
+    const asset: MediaAsset = {
+      id: attrs.id,
+      name: attrs.name || decodedSrc.split('/').pop() || attrs.id,
+      kind: hasVideo ? 'video' : 'audio',
+      sourcePath: decodedSrc,
+      durationUs: parseRationalTimeUs(attrs.duration) || 5 * US_PER_SEC,
+      width: project.settings.width,
+      height: project.settings.height,
+      fps: project.settings.fps,
+      hasAudio: attrs.hasAudio !== '0',
+      fileSizeBytes: 0,
+      createdAt: Date.now(),
+      proxyStatus: 'none',
+    };
+    project.assets[asset.id] = asset;
+  }
+
+  const mainTrack = project.tracks.find((t) => t.isMain)!;
+  const overlayTrack = project.tracks.find((t) => t.type === 'overlay')!;
+  const audioTrack = project.tracks.find((t) => t.type === 'audio')!;
+  const textTrack = project.tracks.find((t) => t.type === 'text')!;
+
+  const clipRe = /<asset-clip\b([^>]*)(?:\/>|>)/gi;
+  let cm: RegExpExecArray | null;
+  let clipIdx = 0;
+  let cursorUs = 0;
+  while ((cm = clipRe.exec(xmlContent)) !== null) {
+    const attrs = parseXmlAttrs(cm[1]!);
+    const lane = Number(attrs.lane ?? '0');
+    const durUs = Math.max(100_000, parseRationalTimeUs(attrs.duration) || 3 * US_PER_SEC);
+    const startUs = attrs.offset != null ? parseRationalTimeUs(attrs.offset) : cursorUs;
+    const srcStartUs = parseRationalTimeUs(attrs.start);
+    const asset = attrs.ref ? project.assets[attrs.ref] : undefined;
+    const targetTrack =
+      lane < 0 || asset?.kind === 'audio' ? audioTrack : lane > 0 ? overlayTrack : mainTrack;
+    const kind: Clip['kind'] = targetTrack.type === 'audio' ? 'audio' : asset?.kind === 'image' ? 'image' : 'video';
+    const cid = `fcpx_clip_${++clipIdx}`;
+    project.clips[cid] = {
+      id: cid,
+      trackId: targetTrack.id,
+      assetId: asset?.id ?? attrs.ref ?? null,
+      kind,
+      name: attrs.name || asset?.name || cid,
+      timelineStartUs: startUs,
+      durationUs: durUs,
+      sourceStartUs: srcStartUs,
+      sourceDurationUs: durUs,
+      locked: false,
+      disabled: false,
+      transform: { ...createDefaultTransform(), fillMode: project.settings.aspectRatio !== '16:9' ? 'cover' : 'fit' },
+      colorGrade: createDefaultColorGrade(),
+      chromaKey: createDefaultChromaKey(),
+      mask: createDefaultMask(),
+      speed: createDefaultSpeed(),
+      audio: createDefaultAudioState(),
+      keyframes: {},
+      effects: [],
+      aiMattingEnabled: false,
+      autoReframeEnabled: false,
+    };
+    if (lane === 0) cursorUs = Math.max(cursorUs, startUs + durUs);
+  }
+
+  const titleRe = /<title\b([^>]*)>([\s\S]*?)<\/title>/gi;
+  let tm: RegExpExecArray | null;
+  let titleIdx = 0;
+  while ((tm = titleRe.exec(xmlContent)) !== null) {
+    const attrs = parseXmlAttrs(tm[1]!);
+    const innerTextMatch = tm[2]!.match(/<text[^>]*>([\s\S]*?)<\/text>/i);
+    const textVal = unescapeXml((innerTextMatch?.[1] || attrs.name || 'Title').replace(/<[^>]+>/g, '').trim());
+    const startUs = parseRationalTimeUs(attrs.offset);
+    const durUs = Math.max(200_000, parseRationalTimeUs(attrs.duration) || 2 * US_PER_SEC);
+    const tid = `fcpx_txt_${++titleIdx}`;
+    project.clips[tid] = {
+      id: tid,
+      trackId: textTrack.id,
+      assetId: null,
+      kind: 'text',
+      name: textVal.slice(0, 24),
+      timelineStartUs: startUs,
+      durationUs: durUs,
+      sourceStartUs: 0,
+      sourceDurationUs: durUs,
+      locked: false,
+      disabled: false,
+      transform: createDefaultTransform(),
+      colorGrade: createDefaultColorGrade(),
+      chromaKey: createDefaultChromaKey(),
+      mask: createDefaultMask(),
+      speed: createDefaultSpeed(),
+      audio: createDefaultAudioState(),
+      keyframes: {},
+      text: createDefaultTextStyle(textVal),
+      effects: [],
+      aiMattingEnabled: false,
+      autoReframeEnabled: false,
+    };
+  }
+
+  return project;
+}
+
+/**
+ * Import OpenTimelineIO (.otio) JSON timeline into a T-CapCut Project.
+ */
+export function importFromOTIO(otioJson: string, projectId?: string): Project {
+  const parsed = JSON.parse(otioJson) as {
+    name?: string;
+    tracks?: {
+      children?: Array<{
+        name?: string;
+        kind?: string;
+        children?: Array<{
+          OTIO_SCHEMA?: string;
+          name?: string;
+          media_reference?: {
+            target_url?: string;
+            available_range?: { duration?: { value?: number; rate?: number } };
+          };
+          source_range?: {
+            start_time?: { value?: number; rate?: number };
+            duration?: { value?: number; rate?: number };
+          };
+        }>;
+      }>;
+    };
+  };
+
+  const project = createEmptyProject(projectId || `proj_otio_${Date.now()}`, parsed.name || 'Imported OTIO Timeline');
+  const mainTrack = project.tracks.find((t) => t.isMain)!;
+  const overlayTrack = project.tracks.find((t) => t.type === 'overlay')!;
+  const audioTrack = project.tracks.find((t) => t.type === 'audio')!;
+
+  const toUs = (rt?: { value?: number; rate?: number }) => {
+    if (!rt || typeof rt.value !== 'number') return 0;
+    const rate = rt.rate && rt.rate > 0 ? rt.rate : 30;
+    return Math.round((rt.value / rate) * US_PER_SEC);
+  };
+
+  let videoTrackIdx = 0;
+  let assetSeq = 0;
+  let clipSeq = 0;
+
+  for (const otioTrack of parsed.tracks?.children ?? []) {
+    const isAudio = (otioTrack.kind || '').toLowerCase() === 'audio';
+    const targetTrack = isAudio ? audioTrack : videoTrackIdx++ === 0 ? mainTrack : overlayTrack;
+    let cursorUs = 0;
+
+    for (const item of otioTrack.children ?? []) {
+      const schema = item.OTIO_SCHEMA || '';
+      const durUs = Math.max(100_000, toUs(item.source_range?.duration) || 3 * US_PER_SEC);
+      if (schema.startsWith('Gap')) {
+        cursorUs += toUs(item.source_range?.duration);
+        continue;
+      }
+      const rawUrl = (item.media_reference?.target_url || '').replace(/^file:\/\//i, '');
+      const assetId = `otio_asset_${++assetSeq}`;
+      const availDur = toUs(item.media_reference?.available_range?.duration) || durUs;
+      if (rawUrl) {
+        project.assets[assetId] = {
+          id: assetId,
+          name: item.name || rawUrl.split('/').pop() || assetId,
+          kind: isAudio ? 'audio' : 'video',
+          sourcePath: decodeURI(rawUrl),
+          durationUs: availDur,
+          width: project.settings.width,
+          height: project.settings.height,
+          fps: project.settings.fps,
+          hasAudio: true,
+          fileSizeBytes: 0,
+          createdAt: Date.now(),
+          proxyStatus: 'none',
+        };
+      }
+      const cid = `otio_clip_${++clipSeq}`;
+      project.clips[cid] = {
+        id: cid,
+        trackId: targetTrack.id,
+        assetId: rawUrl ? assetId : null,
+        kind: isAudio ? 'audio' : 'video',
+        name: item.name || cid,
+        timelineStartUs: cursorUs,
+        durationUs: durUs,
+        sourceStartUs: toUs(item.source_range?.start_time),
+        sourceDurationUs: durUs,
+        locked: false,
+        disabled: false,
+        transform: createDefaultTransform(),
+        colorGrade: createDefaultColorGrade(),
+        chromaKey: createDefaultChromaKey(),
+        mask: createDefaultMask(),
+        speed: createDefaultSpeed(),
+        audio: createDefaultAudioState(),
+        keyframes: {},
+        effects: [],
+        aiMattingEnabled: false,
+        autoReframeEnabled: false,
+      };
+      cursorUs += durUs;
+    }
+  }
+  return project;
+}
+
+export interface TCapCutTemplatePackage {
+  format: 'tcapcut-template-v1';
+  id: string;
+  name: string;
+  aspectRatio: Project['settings']['aspectRatio'];
+  width: number;
+  height: number;
+  fps: number;
+  slots: Array<{ slotIndex: number; clipId: string; label: string; durationUs: number; fillMode?: 'fit' | 'cover' }>;
+  project: Project;
+}
+
+export function buildTemplatePackageFromProject(project: Project, templateName?: string): TCapCutTemplatePackage {
+  const cloned = JSON.parse(JSON.stringify(project)) as Project;
+  const visualClips = Object.values(cloned.clips)
+    .filter((c) => c.kind === 'video' || c.kind === 'image')
+    .sort((a, b) => a.timelineStartUs - b.timelineStartUs);
+
+  const slots = visualClips.map((c, idx) => ({
+    slotIndex: idx,
+    clipId: c.id,
+    label: c.name || `Slot ${idx + 1}`,
+    durationUs: c.durationUs,
+    fillMode: c.transform.fillMode ?? (cloned.settings.aspectRatio !== '16:9' ? 'cover' : 'fit'),
+  }));
+
+  return {
+    format: 'tcapcut-template-v1',
+    id: `tpl_custom_${Date.now()}`,
+    name: templateName || `${project.name} Template`,
+    aspectRatio: cloned.settings.aspectRatio,
+    width: cloned.settings.width,
+    height: cloned.settings.height,
+    fps: cloned.settings.fps,
+    slots,
+    project: cloned,
+  };
 }
 
 /**

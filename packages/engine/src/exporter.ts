@@ -23,6 +23,7 @@ export interface ExportOptions {
   outputPath: string;
   mode: 'hardware' | 'lossless-hybrid' | 'audio-only' | 'subtitle-only' | 'wysiwyg-pipe';
   codec?: 'h264' | 'hevc' | 'prores';
+  tenBitHevc?: boolean;
   width?: number;
   height?: number;
   fps?: number;
@@ -235,6 +236,25 @@ function buildAudioFilterGraph(
       extraFilters.push('aecho=0.8:0.88:12:0.6,highpass=f=200');
     }
 
+    // Studio Audio DSP v4: 5-Band EQ, Noise Gate, Compressor, Semitone Pitch Shift
+    if (clip.audio.noiseGateEnabled) {
+      extraFilters.push('agate=threshold=0.015:ratio=4:attack=10:release=120');
+    }
+    const eqFreqs = [80, 250, 1000, 4000, 12000];
+    (clip.audio.eqBands ?? []).forEach((gainDb, bIdx) => {
+      if (Math.abs(gainDb) > 0.25 && eqFreqs[bIdx]) {
+        extraFilters.push(`equalizer=f=${eqFreqs[bIdx]}:t=q:w=1.4:g=${gainDb.toFixed(1)}`);
+      }
+    });
+    if (clip.audio.compressorEnabled) {
+      extraFilters.push('acompressor=threshold=-16dB:ratio=3.5:attack=8:release=80:makeup=2');
+    }
+    if (clip.audio.pitchSemitones && Math.abs(clip.audio.pitchSemitones) > 0.1) {
+      const ratio = Math.pow(2, clip.audio.pitchSemitones / 12);
+      const invTempo = Math.min(2.0, Math.max(0.5, 1 / ratio));
+      extraFilters.push(`asetrate=48000*${ratio.toFixed(4)},aresample=48000,atempo=${invTempo.toFixed(4)}`);
+    }
+
     if (clip.audio.fadeInUs > 0) extraFilters.push(`afade=t=in:st=0:d=${(clip.audio.fadeInUs / US_PER_SEC).toFixed(3)}`);
     if (clip.audio.fadeOutUs > 0) {
       const outStart = Math.max(0, (clip.durationUs - clip.audio.fadeOutUs) / US_PER_SEC).toFixed(3);
@@ -389,7 +409,9 @@ export function startWysiwygPipeExport(
     ...(audioOutLabel ? ['-map', audioOutLabel, '-c:a', 'aac', '-b:a', '192k'] : ['-an']),
     '-c:v', encoderName,
     ...(options.codec === 'prores' ? [] : ['-b:v', `${options.bitrateKbps ?? 12000}k`]),
-    '-pix_fmt', 'yuv420p',
+    ...(options.codec === 'hevc' && options.tenBitHevc
+      ? ['-profile:v', 'main10', '-pix_fmt', 'p010le']
+      : ['-pix_fmt', 'yuv420p']),
     '-movflags', '+faststart',
     '-t', totalSec,
     options.outputPath,

@@ -219,21 +219,21 @@ function writeWavBuffer(left, right) {
 const midiToFreq = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
 const MUSIC_SPECS = [
-  { id: 'mus_lofi_midnight', bpm: 84, dur: 20, style: 'lofi', chords: [[57, 60, 64, 67], [53, 57, 60, 64], [55, 59, 62, 67], [52, 55, 59, 64]] },
-  { id: 'mus_lofi_rainy', bpm: 78, dur: 20, style: 'lofi', chords: [[60, 64, 67, 71], [57, 60, 64, 67], [53, 57, 60, 65], [55, 59, 62, 65]] },
-  { id: 'mus_lofi_sunset', bpm: 90, dur: 20, style: 'lofi', chords: [[58, 62, 65, 69], [55, 58, 62, 65], [53, 57, 60, 64], [56, 60, 63, 67]] },
-  { id: 'mus_beat_tiktok128', bpm: 128, dur: 16, style: 'edm', chords: [[45, 57, 60, 64], [41, 53, 57, 60], [43, 55, 59, 62], [40, 52, 55, 60]] },
-  { id: 'mus_beat_drift135', bpm: 135, dur: 16, style: 'phonk', chords: [[40, 52, 55, 59], [40, 52, 56, 60], [38, 50, 53, 57], [41, 53, 56, 60]] },
-  { id: 'mus_beat_cyber120', bpm: 120, dur: 16, style: 'edm', chords: [[48, 60, 63, 67], [44, 56, 60, 63], [46, 58, 62, 65], [43, 55, 58, 62]] },
-  { id: 'mus_vlog_morning', bpm: 104, dur: 18, style: 'acoustic', chords: [[60, 64, 67, 72], [55, 59, 62, 67], [57, 60, 64, 69], [53, 57, 60, 65]] },
-  { id: 'mus_vlog_coastal', bpm: 110, dur: 18, style: 'acoustic', chords: [[62, 66, 69, 74], [57, 61, 64, 69], [59, 62, 66, 71], [55, 59, 62, 67]] },
-  { id: 'mus_vlog_coffee', bpm: 96, dur: 18, style: 'acoustic', chords: [[65, 69, 72, 76], [60, 64, 67, 72], [62, 65, 69, 72], [58, 62, 65, 69]] },
-  { id: 'mus_cine_horizon', bpm: 72, dur: 20, style: 'cinematic', chords: [[48, 55, 60, 67], [44, 51, 56, 63], [46, 53, 58, 65], [43, 50, 55, 62]] },
-  { id: 'mus_cine_piano', bpm: 76, dur: 20, style: 'piano', chords: [[57, 64, 69, 72], [53, 60, 65, 69], [48, 55, 60, 64], [55, 62, 67, 71]] },
-  { id: 'mus_cine_epic', bpm: 100, dur: 18, style: 'cinematic', chords: [[45, 52, 57, 64], [41, 48, 53, 60], [43, 50, 55, 62], [40, 47, 52, 59]] },
-  { id: 'mus_tech_review', bpm: 112, dur: 18, style: 'tech', chords: [[57, 60, 64, 69], [53, 57, 60, 65], [60, 64, 67, 72], [55, 59, 62, 67]] },
-  { id: 'mus_tech_studio', bpm: 92, dur: 20, style: 'tech', chords: [[60, 64, 67, 71], [57, 60, 64, 67], [55, 59, 62, 67], [53, 57, 60, 64]] },
-  { id: 'mus_pop_flash', bpm: 122, dur: 16, style: 'edm', chords: [[55, 59, 62, 67], [53, 57, 60, 65], [60, 64, 67, 72], [57, 60, 64, 69]] },
+  { id: 'mus_lofi_midnight', bpm: 84, dur: 44, style: 'lofi', chords: [[57, 60, 64, 67], [53, 57, 60, 64], [55, 59, 62, 67], [52, 55, 59, 64]] },
+  { id: 'mus_lofi_rainy', bpm: 78, dur: 46, style: 'lofi', chords: [[60, 64, 67, 71], [57, 60, 64, 67], [53, 57, 60, 65], [55, 59, 62, 65]] },
+  { id: 'mus_lofi_sunset', bpm: 90, dur: 42, style: 'lofi', chords: [[58, 62, 65, 69], [55, 58, 62, 65], [53, 57, 60, 64], [56, 60, 63, 67]] },
+  { id: 'mus_beat_tiktok128', bpm: 128, dur: 40, style: 'edm', chords: [[45, 57, 60, 64], [41, 53, 57, 60], [43, 55, 59, 62], [40, 52, 55, 60]] },
+  { id: 'mus_beat_drift135', bpm: 135, dur: 40, style: 'phonk', chords: [[40, 52, 55, 59], [40, 52, 56, 60], [38, 50, 53, 57], [41, 53, 56, 60]] },
+  { id: 'mus_beat_cyber120', bpm: 120, dur: 42, style: 'edm', chords: [[48, 60, 63, 67], [44, 56, 60, 63], [46, 58, 62, 65], [43, 55, 58, 62]] },
+  { id: 'mus_vlog_morning', bpm: 104, dur: 44, style: 'acoustic', chords: [[60, 64, 67, 72], [55, 59, 62, 67], [57, 60, 64, 69], [53, 57, 60, 65]] },
+  { id: 'mus_vlog_coastal', bpm: 110, dur: 44, style: 'acoustic', chords: [[62, 66, 69, 74], [57, 61, 64, 69], [59, 62, 66, 71], [55, 59, 62, 67]] },
+  { id: 'mus_vlog_coffee', bpm: 96, dur: 45, style: 'acoustic', chords: [[65, 69, 72, 76], [60, 64, 67, 72], [62, 65, 69, 72], [58, 62, 65, 69]] },
+  { id: 'mus_cine_horizon', bpm: 72, dur: 48, style: 'cinematic', chords: [[48, 55, 60, 67], [44, 51, 56, 63], [46, 53, 58, 65], [43, 50, 55, 62]] },
+  { id: 'mus_cine_piano', bpm: 76, dur: 46, style: 'piano', chords: [[57, 64, 69, 72], [53, 60, 65, 69], [48, 55, 60, 64], [55, 62, 67, 71]] },
+  { id: 'mus_cine_epic', bpm: 100, dur: 44, style: 'cinematic', chords: [[45, 52, 57, 64], [41, 48, 53, 60], [43, 50, 55, 62], [40, 47, 52, 59]] },
+  { id: 'mus_tech_review', bpm: 112, dur: 42, style: 'tech', chords: [[57, 60, 64, 69], [53, 57, 60, 65], [60, 64, 67, 72], [55, 59, 62, 67]] },
+  { id: 'mus_tech_studio', bpm: 92, dur: 45, style: 'tech', chords: [[60, 64, 67, 71], [57, 60, 64, 67], [55, 59, 62, 67], [53, 57, 60, 64]] },
+  { id: 'mus_pop_flash', bpm: 122, dur: 40, style: 'edm', chords: [[55, 59, 62, 67], [53, 57, 60, 65], [60, 64, 67, 72], [57, 60, 64, 69]] },
 ];
 
 function synthesizeMusic(spec, seed) {
@@ -243,9 +243,23 @@ function synthesizeMusic(spec, seed) {
   const rng = makeRng(seed);
   const beatDur = 60 / spec.bpm;
 
+  // Lightweight stereo Schroeder-style hall delay buffer for studio depth
+  const dlyLenL = Math.round(SR * 0.19);
+  const dlyLenR = Math.round(SR * 0.26);
+  const dlyL = new Float32Array(dlyLenL);
+  const dlyR = new Float32Array(dlyLenR);
+  let dIdxL = 0;
+  let dIdxR = 0;
   let lpNoise = 0;
+
   for (let i = 0; i < n; i++) {
     const t = i / SR;
+    const prog = t / spec.dur;
+    const isIntro = prog < 0.18;
+    const isBuildup = prog >= 0.36 && prog < 0.42;
+    const isDrop = prog >= 0.42 && prog < 0.84;
+    const isOutro = prog >= 0.84;
+
     const beatPos = t / beatDur;
     const beatIdx = Math.floor(beatPos);
     const beatFrac = beatPos - beatIdx;
@@ -257,75 +271,117 @@ function synthesizeMusic(spec, seed) {
     const rawNoise = rng();
     lpNoise = lpNoise * 0.8 + rawNoise * 0.2;
 
-    // 1. Warm Chord Pad / Rhodes
+    // Sidechain pump on Drop/Groove EDM tracks
+    const sidechain =
+      (spec.style === 'edm' || spec.style === 'phonk' || spec.style === 'tech') && !isIntro && !isOutro
+        ? 0.48 + 0.52 * smoothstep(0.0, 0.35, beatFrac)
+        : 1.0;
+
+    // 1. Warm Stereo Pad / Keys + Drop Brightness Boost
     let padL = 0;
     let padR = 0;
     const padEnv = smoothstep(0.0, 0.08, barFrac) * (1 - smoothstep(0.92, 1.0, barFrac) * 0.25);
     for (let c = 0; c < chord.length; c++) {
       const f = midiToFreq(chord[c]);
-      const vibrato = 1 + 0.002 * Math.sin(2 * Math.PI * 3.5 * t + c);
-      const tone = Math.sin(2 * Math.PI * f * vibrato * t) * 0.65 + Math.sin(2 * Math.PI * f * 2 * t) * 0.12;
-      const pan = (c - 1.5) * 0.22;
-      padL += tone * (0.5 - pan * 0.4);
-      padR += tone * (0.5 + pan * 0.4);
+      const vibrato = 1 + 0.0022 * Math.sin(2 * Math.PI * 3.5 * t + c);
+      const tone =
+        Math.sin(2 * Math.PI * f * vibrato * t) * 0.62 +
+        Math.sin(2 * Math.PI * f * 2 * t) * (isDrop ? 0.24 : 0.11);
+      const pan = (c - 1.5) * 0.28;
+      padL += tone * (0.5 - pan * 0.45);
+      padR += tone * (0.5 + pan * 0.45);
     }
-    const padGain = spec.style === 'cinematic' ? 0.28 : 0.19;
+    const padGain = (spec.style === 'cinematic' ? 0.29 : 0.2) * (isDrop ? 1.25 : isIntro ? 0.8 : 1.0) * sidechain;
     let sL = padL * padEnv * padGain;
     let sR = padR * padEnv * padGain;
 
-    // 2. Pluck / Arp melody locked to 1/2 beat
+    // 1b. Sub-Bass Root Layer (Verse & Drop)
+    if (!isIntro && !isOutro) {
+      const bassNote = chord[0] - 12;
+      const bf = midiToFreq(bassNote);
+      const bass = Math.sin(2 * Math.PI * bf * t) + 0.2 * Math.tanh(Math.sin(2 * Math.PI * bf * t) * 2);
+      const bassGain = (isDrop ? 0.26 : 0.16) * sidechain;
+      sL += bass * bassGain;
+      sR += bass * bassGain;
+    }
+
+    // 2. Pluck / Expressive Lead Melody synced to 1/2 beat
     const eighthPos = beatPos * 2;
     const eighthIdx = Math.floor(eighthPos);
     const eighthTime = (eighthPos - eighthIdx) * (beatDur * 0.5);
-    if (spec.style !== 'cinematic') {
-      const note = chord[(eighthIdx * 2 + (barIdx % 2)) % chord.length] + 12;
+    if (spec.style !== 'cinematic' || isDrop) {
+      const octaveBoost = isDrop ? 24 : 12;
+      const note = chord[(eighthIdx * 2 + (barIdx % 2)) % chord.length] + octaveBoost;
       const pf = midiToFreq(note);
-      const decay = spec.style === 'acoustic' || spec.style === 'piano' ? 6.5 : 10;
+      const decay = spec.style === 'acoustic' || spec.style === 'piano' ? 6.0 : 9.5;
       const pluckEnv = Math.exp(-eighthTime * decay) * smoothstep(0, 0.004, eighthTime);
-      const harmonic = spec.style === 'phonk' ? Math.tanh(Math.sin(2 * Math.PI * pf * t) * 2.2) * 0.4 : Math.sin(2 * Math.PI * pf * t) + 0.3 * Math.sin(4 * Math.PI * pf * t);
-      const amp = spec.style === 'lofi' ? 0.09 : 0.14;
-      sL += harmonic * pluckEnv * amp * (eighthIdx % 2 === 0 ? 1.0 : 0.7);
-      sR += harmonic * pluckEnv * amp * (eighthIdx % 2 === 1 ? 1.0 : 0.7);
+      const harmonic =
+        spec.style === 'phonk'
+          ? Math.tanh(Math.sin(2 * Math.PI * pf * t) * 2.4) * 0.4
+          : Math.sin(2 * Math.PI * pf * t) + 0.28 * Math.sin(4 * Math.PI * pf * t);
+      const amp = (spec.style === 'lofi' ? 0.1 : 0.15) * (isIntro ? 0.65 : isDrop ? 1.2 : 1.0);
+      sL += harmonic * pluckEnv * amp * (eighthIdx % 2 === 0 ? 1.0 : 0.68);
+      sR += harmonic * pluckEnv * amp * (eighthIdx % 2 === 1 ? 1.0 : 0.68);
     }
 
-    // 3. Kick Drum on beats (exact sync for Beat-Sync markers!)
+    // 2b. Build-up Tension Riser (36% - 42%)
+    if (isBuildup) {
+      const bProg = (prog - 0.36) / 0.06;
+      const riser = Math.sin(2 * Math.PI * (240 + 1100 * bProg) * t) * 0.08 + (rawNoise - lpNoise) * 0.16 * bProg;
+      sL += riser * bProg;
+      sR += riser * bProg * 0.95;
+    }
+
+    // 3. Kick Drum on beats (muted softly during Outro, doubled energy on Drop)
     const isKickBeat =
-      spec.style === 'edm' || spec.style === 'phonk' || spec.style === 'tech'
-        ? true
-        : beatIdx % 2 === 0 || (beatIdx % 4 === 3 && spec.style === 'lofi');
+      !isOutro &&
+      (spec.style === 'edm' || spec.style === 'phonk' || spec.style === 'tech'
+        ? !isIntro || beatIdx % 2 === 0
+        : beatIdx % 2 === 0 || (beatIdx % 4 === 3 && spec.style === 'lofi'));
     if (isKickBeat && bt < 0.24) {
-      const kFreq = 48 + 110 * Math.exp(-bt * 36);
-      const kEnv = Math.exp(-bt * 14);
-      const kickAmp = spec.style === 'edm' || spec.style === 'phonk' ? 0.52 : spec.style === 'cinematic' ? 0.28 : 0.34;
+      const kFreq = 46 + 112 * Math.exp(-bt * 36);
+      const kEnv = Math.exp(-bt * 13);
+      const kickAmp = (spec.style === 'edm' || spec.style === 'phonk' ? 0.5 : 0.32) * (isDrop ? 1.12 : isIntro ? 0.65 : 1.0);
       const kick = Math.sin(2 * Math.PI * kFreq * bt) * kEnv * kickAmp;
       sL += kick;
       sR += kick;
     }
 
-    // 4. Snare / Clap on beats 1 and 3
-    if (beatIdx % 2 === 1 && bt < 0.16 && spec.style !== 'piano' && spec.style !== 'cinematic') {
+    // 4. Snare / Clap on beats 1 and 3 (or buildup 16th rolls)
+    if (!isIntro && !isOutro && beatIdx % 2 === 1 && bt < 0.16 && spec.style !== 'piano' && spec.style !== 'cinematic') {
       const snEnv = Math.exp(-bt * 24);
-      const snare = (rawNoise * 0.65 + Math.sin(2 * Math.PI * 190 * bt) * 0.35) * snEnv * (spec.style === 'lofi' ? 0.12 : 0.22);
+      const snare = (rawNoise * 0.65 + Math.sin(2 * Math.PI * 195 * bt) * 0.35) * snEnv * (spec.style === 'lofi' ? 0.13 : 0.23);
       sL += snare;
       sR += snare;
     }
 
-    // 5. Hi-Hat on eighth notes + vinyl texture for lo-fi
-    if ((spec.style === 'edm' || spec.style === 'phonk' || spec.style === 'lofi' || spec.style === 'tech') && eighthTime < 0.05) {
-      const hh = (rawNoise - lpNoise) * Math.exp(-eighthTime * 65) * 0.09;
+    // 5. Hi-Hat on eighth notes + vinyl crackle
+    if (!isOutro && (spec.style === 'edm' || spec.style === 'phonk' || spec.style === 'lofi' || spec.style === 'tech') && eighthTime < 0.05) {
+      const hh = (rawNoise - lpNoise) * Math.exp(-eighthTime * 65) * (isDrop ? 0.11 : 0.075);
       sL += hh;
       sR += hh * 0.85;
     }
     if (spec.style === 'lofi') {
-      const crackle = Math.abs(rawNoise) > 0.985 ? rawNoise * 0.06 : 0;
+      const crackle = Math.abs(rawNoise) > 0.985 ? rawNoise * 0.05 : 0;
       sL += crackle + lpNoise * 0.015;
       sR += crackle * 0.7 + lpNoise * 0.015;
     }
 
-    // Smooth edge fades for loopability
-    const edgeFade = smoothstep(0, 0.06, t) * smoothstep(spec.dur, spec.dur - 0.12, t);
-    left[i] = Math.tanh(sL * edgeFade * 1.15);
-    right[i] = Math.tanh(sR * edgeFade * 1.15);
+    // Stereo Reverb Feedback Tank
+    const wetL = dlyL[dIdxL];
+    const wetR = dlyR[dIdxR];
+    dlyL[dIdxL] = (sL + wetR * 0.28) * 0.35;
+    dlyR[dIdxR] = (sR + wetL * 0.28) * 0.35;
+    dIdxL = (dIdxL + 1) % dlyLenL;
+    dIdxR = (dIdxR + 1) % dlyLenR;
+
+    const mixL = sL + wetL * 0.32;
+    const mixR = sR + wetR * 0.32;
+
+    const outroEnv = isOutro ? 1 - smoothstep(0.86, 1.0, prog) * 0.85 : 1.0;
+    const edgeFade = smoothstep(0, 0.06, t) * smoothstep(spec.dur, spec.dur - 0.18, t) * outroEnv;
+    left[i] = Math.tanh(mixL * edgeFade * 1.15);
+    right[i] = Math.tanh(mixR * edgeFade * 1.15);
   }
   return { left, right };
 }

@@ -241,7 +241,7 @@ describe('@t-capcut/engine', () => {
       assert.equal(healthResp.status, 200);
       const healthJson = (await healthResp.json()) as { ok: boolean; version: string };
       assert.equal(healthJson.ok, true);
-      assert.equal(healthJson.version, '3.0.0');
+      assert.equal(healthJson.version, '4.0.0');
 
       // Test SSE /api/export/start + /events progress stream
       const startRes = await fetch(`${url}/api/export/start`, {
@@ -366,6 +366,50 @@ describe('@t-capcut/engine', () => {
       const { plan: v3Plan } = (await v3ChatRes.json()) as { plan: { ops: Array<{ op: string; payload?: Record<string, unknown> }> } };
       assert.ok(v3Plan.ops.some((o) => o.op === 'apply_color' && o.payload?.lutId === 'lut_kodak_2383'));
       assert.ok(v3Plan.ops.some((o) => o.op === 'add_effect' && o.payload?.shaderId === 'halation'));
+
+      // Verify v4.0 Universal Template Pack ZIP + System Fonts + Offline TTS + Smart Music Remix
+      const packRes = await fetch(`${url}/api/templates/export-pack`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: pipeProj.id, templateName: 'V4 Pack Test' }),
+      });
+      assert.equal(packRes.status, 200);
+      const packJson = (await packRes.json()) as { filename: string; contentBase64: string };
+      assert.ok(packJson.filename.endsWith('.tcapcut-tpl'));
+
+      const importUnivRes = await fetch(`${url}/api/interop/import-universal`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: packJson.filename, contentBase64: packJson.contentBase64 }),
+      });
+      assert.equal(importUnivRes.status, 200);
+      const univJson = (await importUnivRes.json()) as { kind: string; project?: { name: string } };
+      assert.equal(univJson.kind, 'project');
+      assert.equal(univJson.project?.name, 'V4 Pack Test');
+
+      const fontsRes = await fetch(`${url}/api/system/fonts`, { headers: authHeaders });
+      assert.equal(fontsRes.status, 200);
+      const fontsJson = (await fontsRes.json()) as { fonts: string[] };
+      assert.ok(fontsJson.fonts.length >= 4);
+
+      const ttsRes = await fetch(`${url}/api/ai/tts`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'Xin chào T-CapCut Studio', language: 'vi' }),
+      });
+      assert.equal(ttsRes.status, 200);
+      const ttsJson = (await ttsRes.json()) as { asset: MediaAsset };
+      assert.equal(ttsJson.asset.kind, 'audio');
+      assert.ok(ttsJson.asset.durationUs > 400_000);
+
+      const remixRes = await fetch(`${url}/api/audio/smart-remix`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assetId: addedMus.id, targetDurationUs: 5_000_000 }),
+      });
+      assert.equal(remixRes.status, 200);
+      const remixJson = (await remixRes.json()) as { asset: MediaAsset };
+      assert.ok(remixJson.asset.durationUs > 4_000_000 && remixJson.asset.durationUs < 6_500_000);
     } finally {
       await server.stop();
       fs.rmSync(tmpDir, { recursive: true, force: true });

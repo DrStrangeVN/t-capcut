@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bot,
+  Command,
   Cpu,
   Download,
   FolderPlus,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { AspectRatioPreset } from '@t-capcut/schema';
 import { ChatCutModal } from './components/ChatCutModal';
+import { CommandPaletteModal } from './components/CommandPaletteModal';
 import { ExportModal } from './components/ExportModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { LeftStudioPanel } from './components/LeftStudioPanel';
@@ -52,6 +54,9 @@ export const App: React.FC = () => {
   const setHistoryDrawerOpen = useEditorStore((s) => s.setHistoryDrawerOpen);
   const setChatCutOpen = useEditorStore((s) => s.setChatCutOpen);
   const setExportModalOpen = useEditorStore((s) => s.setExportModalOpen);
+  const fullscreenPreview = useEditorStore((s) => s.fullscreenPreview);
+  const setFullscreenPreview = useEditorStore((s) => s.setFullscreenPreview);
+  const setCommandPaletteOpen = useEditorStore((s) => s.setCommandPaletteOpen);
   const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
   const setErrorMessage = useEditorStore((s) => s.setErrorMessage);
 
@@ -136,6 +141,14 @@ export const App: React.FC = () => {
       } else if (mod && key === 'k') {
         e.preventDefault();
         st.setChatCutOpen(!st.chatCutOpen);
+      } else if (mod && key === 'p') {
+        e.preventDefault();
+        st.setCommandPaletteOpen(!st.commandPaletteOpen);
+      } else if (mod && e.shiftKey && key === 'f') {
+        e.preventDefault();
+        st.setFullscreenPreview(!st.fullscreenPreview);
+      } else if (e.key === 'Escape' && st.fullscreenPreview) {
+        st.setFullscreenPreview(false);
       } else if (mod && key === 'b') {
         e.preventDefault();
         void st.splitClipAtPlayhead();
@@ -155,6 +168,8 @@ export const App: React.FC = () => {
         st.setTool('blade');
       } else if (key === 'm') {
         void st.addMarkerAtPlayhead();
+      } else if (e.shiftKey && (e.key === 'Delete' || e.key === 'Backspace')) {
+        void st.rippleDeleteClip();
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         void st.deleteSelectedClip();
       }
@@ -237,6 +252,9 @@ export const App: React.FC = () => {
           <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
 
           <select
+            id="tcapcut-project-select"
+            name="project_select"
+            aria-label="Chọn dự án hiện tại"
             className="glass-select"
             style={{ width: 175, padding: '5px 8px' }}
             value={project?.id ?? ''}
@@ -305,6 +323,10 @@ export const App: React.FC = () => {
             <Cpu size={13} /> Proxy
           </button>
 
+          <button className="glass-btn" onClick={() => setCommandPaletteOpen(true)} title="Command Palette Tìm Nhanh (Cmd+P)">
+            <Command size={13} color="#a78bfa" /> <span className="mono" style={{ fontSize: 10 }}>⌘P</span>
+          </button>
+
           <button className="glass-btn" onClick={() => setChatCutOpen(true)} title="Mở T-ChatCut Copilot (Cmd+K)">
             <Bot size={14} color="#22d3ee" /> T-ChatCut <span className="mono" style={{ opacity: 0.65, fontSize: 10 }}>⌘K</span>
           </button>
@@ -317,14 +339,14 @@ export const App: React.FC = () => {
 
       {/* Resizable 3-Column Studio Workspace */}
       <div style={{ flex: 1, display: 'flex', gap: 0, minHeight: 0 }}>
-        {!leftCollapsed && (
+        {!leftCollapsed && !fullscreenPreview && (
           <>
             <LeftStudioPanel widthPx={leftWidth} />
             <div className="pane-resizer-v" onPointerDown={(e) => startResize('left', e)} />
           </>
         )}
         <PlayerViewport />
-        {!rightCollapsed && (
+        {!rightCollapsed && !fullscreenPreview && (
           <>
             <div className="pane-resizer-v" onPointerDown={(e) => startResize('right', e)} />
             <RightInspector widthPx={rightWidth} />
@@ -332,10 +354,13 @@ export const App: React.FC = () => {
         )}
       </div>
 
-      <div className="pane-resizer-h" onPointerDown={(e) => startResize('timeline', e)} />
-
-      {/* Bottom 120Hz Virtualized Timeline */}
-      <TimelineCanvas heightPx={timelineHeight} />
+      {!fullscreenPreview && (
+        <>
+          <div className="pane-resizer-h" onPointerDown={(e) => startResize('timeline', e)} />
+          {/* Bottom 120Hz Virtualized Timeline */}
+          <TimelineCanvas heightPx={timelineHeight} />
+        </>
+      )}
 
       {/* Status Toast */}
       {(busyTask || statusMessage) && (
@@ -384,6 +409,7 @@ export const App: React.FC = () => {
 
       <HistoryDrawer />
       <TemplateModal />
+      <CommandPaletteModal />
       <ChatCutModal />
       <ExportModal />
     </div>

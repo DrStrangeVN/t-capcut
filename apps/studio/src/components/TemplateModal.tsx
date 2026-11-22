@@ -7,16 +7,102 @@ import { useEditorStore } from '../store/useEditorStore';
 export const TemplateModal: React.FC = () => {
   const project = useEditorStore((s) => s.project);
   const template = useEditorStore((s) => s.templateModalPreset);
+  const importReport = useEditorStore((s) => s.importReport);
   const setTemplateModalPreset = useEditorStore((s) => s.setTemplateModalPreset);
+  const setImportReport = useEditorStore((s) => s.setImportReport);
   const applyTemplateProject = useEditorStore((s) => s.applyTemplateProject);
+  const replaceClipAsset = useEditorStore((s) => s.replaceClipAsset);
   const createDemoSample = useEditorStore((s) => s.createDemoSample);
 
   const [slotMap, setSlotMap] = useState<Record<number, string>>({});
+  const [slotSlipUs, setSlotSlipUs] = useState<Record<number, number>>({});
 
   const visualAssets: MediaAsset[] = useMemo(() => {
     if (!project) return [];
     return Object.values(project.assets).filter((a) => a.kind === 'video' || a.kind === 'image');
   }, [project]);
+
+  if (!template && !importReport) return null;
+
+  if (!template && importReport) {
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 85,
+          background: 'rgba(2, 6, 23, 0.72)',
+          backdropFilter: 'blur(16px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+        }}
+        onClick={() => setImportReport(null)}
+      >
+        <div
+          className="nle-content-surface"
+          onClick={(e) => e.stopPropagation()}
+          style={{ width: 'min(640px, 95vw)', maxHeight: '86vh', display: 'flex', flexDirection: 'column', borderRadius: 20, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.16)' }}
+        >
+          <div style={{ padding: '14px 18px', background: 'linear-gradient(135deg, #0ea5e9, #6366f1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>Báo Cáo Tương Thích Mẫu Ngoài: {importReport.title}</div>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.9)' }}>Độ tương thích ánh xạ hiệu ứng/chuyển cảnh: {importReport.compatibilityPct}%</div>
+            </div>
+            <button className="glass-btn" onClick={() => setImportReport(null)}>
+              <X size={15} />
+            </button>
+          </div>
+          <div className="glass-scroll" style={{ padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {importReport.mappedItems.length > 0 && (
+              <div style={{ padding: 10, borderRadius: 12, background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.28)', fontSize: 11.5 }}>
+                <div style={{ fontWeight: 700, color: '#34d399', marginBottom: 4 }}>✓ Đã ánh xạ 1:1 ({importReport.mappedItems.length})</div>
+                <div style={{ color: 'var(--text-secondary)' }}>{importReport.mappedItems.slice(0, 8).join(' · ')}</div>
+              </div>
+            )}
+            {importReport.fallbackItems.length > 0 && (
+              <div style={{ padding: 10, borderRadius: 12, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.28)', fontSize: 11.5 }}>
+                <div style={{ fontWeight: 700, color: '#fbbf24', marginBottom: 4 }}>⚠ Fallback ({importReport.fallbackItems.length})</div>
+                <div>{importReport.fallbackItems.join(' · ')}</div>
+              </div>
+            )}
+            {importReport.missingMediaSlots.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#67e8f9' }}>
+                  Auto-Slot Replacement ({importReport.missingMediaSlots.length} clip gốc chưa có trên máy — chọn clip thay thế bên dưới):
+                </div>
+                {importReport.missingMediaSlots.map((slot) => (
+                  <div key={slot.clipId} style={{ padding: 10, borderRadius: 10, background: 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600 }}>#{slot.slotIndex + 1} · {slot.label}</div>
+                      <div className="mono" style={{ fontSize: 10, color: 'var(--text-secondary)' }}>{(slot.durationUs / US_PER_SEC).toFixed(2)}s</div>
+                    </div>
+                    <select
+                      className="glass-select"
+                      style={{ width: 220 }}
+                      defaultValue=""
+                      onChange={(e) => {
+                        if (e.target.value) void replaceClipAsset(slot.clipId, e.target.value);
+                      }}
+                    >
+                      <option value="">-- Chọn clip thay thế --</option>
+                      {visualAssets.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div style={{ padding: '12px 18px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="glass-btn glass-btn-primary" onClick={() => setImportReport(null)}>Xong & Chỉnh Trên Timeline</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!template) return null;
 
@@ -167,6 +253,26 @@ export const TemplateModal: React.FC = () => {
                       </option>
                     ))}
                   </select>
+                  {(() => {
+                    const matchedAsset = visualAssets.find((a) => a.id === selectedId);
+                    const maxSlipSec = Math.max(0, ((matchedAsset?.durationUs ?? 0) - slot.durationUs) / US_PER_SEC);
+                    if (!matchedAsset || maxSlipSec <= 0.2) return null;
+                    const curSlipSec = (slotSlipUs[idx] ?? 0) / US_PER_SEC;
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-secondary)' }}>
+                        <span>In: {curSlipSec.toFixed(1)}s</span>
+                        <input
+                          type="range"
+                          className="glass-slider"
+                          min={0}
+                          max={maxSlipSec}
+                          step={0.1}
+                          value={curSlipSec}
+                          onChange={(e) => setSlotSlipUs((prev) => ({ ...prev, [idx]: Math.round(Number(e.target.value) * US_PER_SEC) }))}
+                        />
+                      </div>
+                    );
+                  })()}
                   <div style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {slot.transitionId && <span>⇄ {slot.transitionId}</span>}
                     {slot.vfxId && <span>✨ {slot.vfxId}</span>}

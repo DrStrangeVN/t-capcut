@@ -1,6 +1,6 @@
 import type { StickerState } from '@t-capcut/schema';
 
-export type StickerCategory = 'creator' | 'badge' | 'particle';
+export type StickerCategory = 'creator' | 'badge' | 'particle' | 'lottie';
 
 export interface StickerPreset extends StickerState {
   id: string;
@@ -10,11 +10,126 @@ export interface StickerPreset extends StickerState {
 }
 
 export const STICKER_CATEGORIES: Array<{ id: StickerCategory | 'all'; label: string }> = [
-  { id: 'all', label: 'Tất cả (24)' },
+  { id: 'all', label: 'Tất cả (30)' },
+  { id: 'lottie', label: 'Lottie Vector (6)' },
   { id: 'creator', label: 'Creator UI (10)' },
   { id: 'badge', label: 'Nhãn & Tem (8)' },
   { id: 'particle', label: 'Hạt Bay GPU (6)' },
 ];
+
+function makeVectorLottie(opts: {
+  name: string;
+  color: [number, number, number, number];
+  accent: [number, number, number, number];
+  shape: 'pulse_ring' | 'star_burst' | 'rec_dot' | 'swipe_arrow' | 'flame_pop' | 'glass_pill';
+}): string {
+  const ease = { i: { x: [0.22], y: [1] }, o: { x: [0.36], y: [0] } };
+  const shapeLayers: unknown[] = [];
+
+  if (opts.shape === 'pulse_ring' || opts.shape === 'glass_pill') {
+    shapeLayers.push({
+      ddd: 0,
+      ind: 1,
+      ty: 4,
+      nm: 'Ring',
+      sr: 1,
+      ks: {
+        o: { a: 1, k: [{ t: 0, s: [100], ...ease }, { t: 45, s: [0] }, { t: 60, s: [100] }] },
+        r: { a: 0, k: 0 },
+        p: { a: 0, k: [200, 200, 0] },
+        a: { a: 0, k: [0, 0, 0] },
+        s: { a: 1, k: [{ t: 0, s: [60, 60, 100], ...ease }, { t: 45, s: [145, 145, 100] }, { t: 60, s: [60, 60, 100] }] },
+      },
+      shapes: [
+        {
+          ty: 'gr',
+          it: [
+            opts.shape === 'glass_pill'
+              ? { ty: 'rc', d: 1, s: { a: 0, k: [260, 88] }, p: { a: 0, k: [0, 0] }, r: { a: 0, k: 24 } }
+              : { ty: 'el', d: 1, s: { a: 0, k: [180, 180] }, p: { a: 0, k: [0, 0] } },
+            { ty: 'st', c: { a: 0, k: opts.color }, o: { a: 0, k: 100 }, w: { a: 0, k: 12 }, lc: 2, lj: 2 },
+            { ty: 'fl', c: { a: 0, k: opts.accent }, o: { a: 0, k: 25 } },
+            { ty: 'tr', p: { a: 0, k: [0, 0] }, a: { a: 0, k: [0, 0] }, s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 } },
+          ],
+        },
+      ],
+      ip: 0,
+      op: 60,
+      st: 0,
+    });
+  } else if (opts.shape === 'star_burst' || opts.shape === 'flame_pop') {
+    shapeLayers.push({
+      ddd: 0,
+      ind: 1,
+      ty: 4,
+      nm: 'Star',
+      sr: 1,
+      ks: {
+        o: { a: 0, k: 100 },
+        r: { a: 1, k: [{ t: 0, s: [0] }, { t: 60, s: [360] }] },
+        p: { a: 0, k: [200, 200, 0] },
+        a: { a: 0, k: [0, 0, 0] },
+        s: { a: 1, k: [{ t: 0, s: [75, 75, 100], ...ease }, { t: 30, s: [120, 120, 100], ...ease }, { t: 60, s: [75, 75, 100] }] },
+      },
+      shapes: [
+        {
+          ty: 'gr',
+          it: [
+            { ty: 'sr', sy: 1, d: 1, pt: { a: 0, k: opts.shape === 'star_burst' ? 6 : 8 }, p: { a: 0, k: [0, 0] }, r: { a: 0, k: 0 }, ir: { a: 0, k: 48 }, is: { a: 0, k: 0 }, or: { a: 0, k: 108 }, os: { a: 0, k: 0 } },
+            { ty: 'fl', c: { a: 0, k: opts.color }, o: { a: 0, k: 92 } },
+            { ty: 'st', c: { a: 0, k: opts.accent }, o: { a: 0, k: 100 }, w: { a: 0, k: 6 } },
+            { ty: 'tr', p: { a: 0, k: [0, 0] }, a: { a: 0, k: [0, 0] }, s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 } },
+          ],
+        },
+      ],
+      ip: 0,
+      op: 60,
+      st: 0,
+    });
+  } else {
+    shapeLayers.push({
+      ddd: 0,
+      ind: 1,
+      ty: 4,
+      nm: 'BadgeCore',
+      sr: 1,
+      ks: {
+        o: { a: 1, k: [{ t: 0, s: [100] }, { t: 30, s: [35] }, { t: 60, s: [100] }] },
+        r: { a: 0, k: 0 },
+        p: { a: 1, k: [{ t: 0, s: [200, 225, 0], ...ease }, { t: 30, s: [200, 170, 0], ...ease }, { t: 60, s: [200, 225, 0] }] },
+        a: { a: 0, k: [0, 0, 0] },
+        s: { a: 0, k: [100, 100, 100] },
+      },
+      shapes: [
+        {
+          ty: 'gr',
+          it: [
+            { ty: 'el', d: 1, s: { a: 0, k: [120, 120] }, p: { a: 0, k: [0, 0] } },
+            { ty: 'fl', c: { a: 0, k: opts.color }, o: { a: 0, k: 95 } },
+            { ty: 'st', c: { a: 0, k: opts.accent }, o: { a: 0, k: 100 }, w: { a: 0, k: 8 } },
+            { ty: 'tr', p: { a: 0, k: [0, 0] }, a: { a: 0, k: [0, 0] }, s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 } },
+          ],
+        },
+      ],
+      ip: 0,
+      op: 60,
+      st: 0,
+    });
+  }
+
+  return JSON.stringify({
+    v: '5.7.4',
+    fr: 30,
+    ip: 0,
+    op: 60,
+    w: 400,
+    h: 400,
+    nm: opts.name,
+    ddd: 0,
+    assets: [],
+    layers: shapeLayers,
+  });
+}
 
 export const STICKERS_CATALOG: StickerPreset[] = [
   // Creator UI (10)
@@ -46,4 +161,12 @@ export const STICKERS_CATALOG: StickerPreset[] = [
   { id: 'ptc_hearts', presetId: 'ptc_hearts', category: 'particle', name: 'Tim Hồng Bay Lên', desc: 'Trái tim hồng bay nổi mượt cho video tình cảm', primaryColor: '#FB7185', secondaryColor: '#F472B6', particleType: 'hearts', defaultDurationUs: 5_000_000, previewEmoji: '💖' },
   { id: 'ptc_confetti', presetId: 'ptc_confetti', category: 'particle', name: 'Pháo Giấy Chúc Mừng', desc: 'Confetti đa sắc rơi xoay chuyển động', primaryColor: '#22D3EE', secondaryColor: '#FACC15', particleType: 'confetti', defaultDurationUs: 4_000_000, previewEmoji: '🎉' },
   { id: 'ptc_bokeh', presetId: 'ptc_bokeh', category: 'particle', name: 'Bokeh Đêm Lấp Lánh', desc: 'Vòng tròn ánh sáng mờ lung linh lãng mạn', primaryColor: '#38BDF8', secondaryColor: '#C084FC', particleType: 'bokeh', defaultDurationUs: 6_000_000, previewEmoji: '🔵' },
+
+  // Lottie Vector Motion Templates (6 — After Effects / LottieFiles Engine)
+  { id: 'lt_pulse_ring', presetId: 'lt_pulse_ring', category: 'lottie', name: 'Lottie Cyber Tap Ring', label: 'TAP RING', desc: 'Vòng sóng vector Lottie lan tỏa nhấn điểm chạm', primaryColor: '#22D3EE', secondaryColor: '#6366F1', iconType: 'lottie', lottieJson: makeVectorLottie({ name: 'CyberTapRing', color: [0.13, 0.83, 0.93, 1], accent: [0.39, 0.4, 0.95, 1], shape: 'pulse_ring' }), lottieDurationSec: 2, defaultDurationUs: 3_000_000, previewEmoji: '💠' },
+  { id: 'lt_star_burst', presetId: 'lt_star_burst', category: 'lottie', name: 'Lottie Starburst 6-Wing', label: 'SPARKLE', desc: 'Ngôi sao 6 cánh xoay co giãn vector Lottie', primaryColor: '#FACC15', secondaryColor: '#FFFFFF', iconType: 'lottie', lottieJson: makeVectorLottie({ name: 'StarBurst', color: [0.98, 0.8, 0.08, 1], accent: [1, 1, 1, 1], shape: 'star_burst' }), lottieDurationSec: 2, defaultDurationUs: 3_000_000, previewEmoji: '🌟' },
+  { id: 'lt_glass_pill', presetId: 'lt_glass_pill', category: 'lottie', name: 'Lottie Liquid Glass Box', label: 'GLASS CARD', desc: 'Khung thẻ bo tròn pha lê bật nảy After Effects', primaryColor: '#67E8F9', secondaryColor: '#0EA5E9', iconType: 'lottie', lottieJson: makeVectorLottie({ name: 'GlassBox', color: [0.4, 0.91, 0.98, 1], accent: [0.05, 0.65, 0.91, 1], shape: 'glass_pill' }), lottieDurationSec: 2, defaultDurationUs: 3_500_000, previewEmoji: '🪟' },
+  { id: 'lt_flame_pop', presetId: 'lt_flame_pop', category: 'lottie', name: 'Lottie Viral Nova Burst', label: 'VIRAL', desc: 'Bùng nổ tia 8 cánh cho cảnh cao trào', primaryColor: '#FB7185', secondaryColor: '#FDE047', iconType: 'lottie', lottieJson: makeVectorLottie({ name: 'ViralBurst', color: [0.98, 0.44, 0.52, 1], accent: [0.99, 0.88, 0.28, 1], shape: 'flame_pop' }), lottieDurationSec: 2, defaultDurationUs: 2_500_000, previewEmoji: '💥' },
+  { id: 'lt_rec_pulse', presetId: 'lt_rec_pulse', category: 'lottie', name: 'Lottie Studio ON AIR Beacon', label: 'ON AIR', desc: 'Đèn nhấp nháy vector thu âm Live', primaryColor: '#EF4444', secondaryColor: '#FCA5A5', iconType: 'lottie', lottieJson: makeVectorLottie({ name: 'OnAir', color: [0.94, 0.27, 0.27, 1], accent: [0.99, 0.65, 0.65, 1], shape: 'rec_dot' }), lottieDurationSec: 2, defaultDurationUs: 4_000_000, previewEmoji: '🔴' },
+  { id: 'lt_swipe_beacon', presetId: 'lt_swipe_beacon', category: 'lottie', name: 'Lottie Floating Beacon CTA', label: 'SWIPE UP', desc: 'Vòng nổi kêu gọi hành động lơ lửng', primaryColor: '#34D399', secondaryColor: '#FFFFFF', iconType: 'lottie', lottieJson: makeVectorLottie({ name: 'SwipeUp', color: [0.2, 0.83, 0.6, 1], accent: [1, 1, 1, 1], shape: 'swipe_arrow' }), lottieDurationSec: 2, defaultDurationUs: 3_000_000, previewEmoji: '⬆️' },
 ];

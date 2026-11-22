@@ -2,7 +2,7 @@ export type VfxCategory = 'retro' | 'light' | 'glitch' | 'camera' | 'blur' | 'st
 
 export interface VfxPreset {
   id: string;
-  shaderIndex: number; // 1..36 in VFX_FRAGMENT_SHADER
+  shaderIndex: number; // 1..48 in VFX_FRAGMENT_SHADER
   name: string;
   category: VfxCategory;
   categoryLabel: string;
@@ -14,7 +14,7 @@ export interface VfxPreset {
 }
 
 export const VFX_CATEGORIES: Array<{ id: VfxCategory | 'all'; label: string }> = [
-  { id: 'all', label: 'Tất cả (36)' },
+  { id: 'all', label: 'Tất cả (48)' },
   { id: 'retro', label: 'Retro & Film' },
   { id: 'light', label: 'Ánh sáng' },
   { id: 'glitch', label: 'Glitch & Cyber' },
@@ -71,6 +71,20 @@ export const VFX_CATALOG: VfxPreset[] = [
   { id: 'thermal', shaderIndex: 34, name: 'Thermal Heat Vision', category: 'stylize', categoryLabel: 'Nghệ thuật', desc: 'Camera tầm nhiệt hồng ngoại Predator', defaultIntensity: 0.85, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #1d4ed8, #ef4444)' },
   { id: 'night_vision', shaderIndex: 35, name: 'Night Vision Green', category: 'stylize', categoryLabel: 'Nghệ thuật', desc: 'Kính nhìn đêm xanh lục + hạt nhiễu nhẹ', defaultIntensity: 0.8, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #052e16, #22c55e)' },
   { id: 'sketch_outline', shaderIndex: 36, name: 'Sketch Pencil Outline', category: 'stylize', categoryLabel: 'Nghệ thuật', desc: 'Nét vẽ bút chì trên giấy trắng', defaultIntensity: 0.8, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #e5e7eb, #374151)' },
+
+  // v4.0 Next-Gen Shaders (37..48)
+  { id: 'perlin_shake', shaderIndex: 37, name: 'Organic Perlin Shake Pro', category: 'camera', categoryLabel: 'Camera', desc: 'Rung máy cầm tay hữu cơ Perlin kèm viền Motion Blur', defaultIntensity: 0.65, defaultSpeed: 1.2, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #0f172a, #22d3ee)' },
+  { id: 'skin_beauty', shaderIndex: 38, name: 'Face Beauty Smooth GPU', category: 'blur', categoryLabel: 'Mờ & Focus', desc: 'Làm mịn da tách cạnh Bilateral tự nhiên không bệt nét', defaultIntensity: 0.7, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #fda4af, #fed7aa)' },
+  { id: 'radial_zoom_fast', shaderIndex: 39, name: 'Whip Zoom Beat Blur', category: 'camera', categoryLabel: 'Camera', desc: 'Phóng hút tâm mạnh kết hợp nhòe hướng nhịp trống', defaultIntensity: 0.78, defaultSpeed: 1.5, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #4f46e5, #06b6d4)' },
+  { id: 'beat_rgb_split', shaderIndex: 40, name: 'Beat-Reactive RGB Prism', category: 'glitch', categoryLabel: 'Glitch & Cyber', desc: 'Tách 3 kênh màu RGB giật bật theo chu kỳ phách', defaultIntensity: 0.75, defaultSpeed: 1.6, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #ef4444, #3b82f6)' },
+  { id: 'crt_curved', shaderIndex: 41, name: 'Curved CRT Monitor', category: 'retro', categoryLabel: 'Retro & Film', desc: 'Màn hình ống phóng tia CRT cong viền + phốt-pho phát sáng', defaultIntensity: 0.8, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #0c4a6e, #34d399)' },
+  { id: 'rain_lens', shaderIndex: 42, name: 'Rain Drops On Lens', category: 'light', categoryLabel: 'Ánh sáng', desc: 'Giọt mưa khúc xạ chảy trên bề mặt ống kính rạp phim', defaultIntensity: 0.75, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #1e3a8a, #93c5fd)' },
+  { id: 'subject_neon_glow', shaderIndex: 43, name: 'Cyber Aura Edge Halo', category: 'glitch', categoryLabel: 'Glitch & Cyber', desc: 'Viền hào quang Neon tỏa sáng quanh chủ thể tương phản', defaultIntensity: 0.78, defaultSpeed: 1.2, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #a855f7, #22d3ee)' },
+  { id: 'miniature_tilt', shaderIndex: 44, name: 'Deep Bokeh Tilt-Shift Pro', category: 'blur', categoryLabel: 'Mờ & Focus', desc: 'Hiệu ứng ống kính Tilt-Shift tăng rực màu mô hình thu nhỏ', defaultIntensity: 0.8, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #0284c7, #fde047)' },
+  { id: 'cine_halation_pro', shaderIndex: 45, name: '35mm Film Halation Pro', category: 'retro', categoryLabel: 'Retro & Film', desc: 'Quầng đỏ phim nhựa 35mm + hạt phim hữu cơ thời gian thực', defaultIntensity: 0.75, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #991b1b, #fbbf24)' },
+  { id: 'speed_lines', shaderIndex: 46, name: 'Anime Action Speed Lines', category: 'stylize', categoryLabel: 'Nghệ thuật', desc: 'Tia tốc độ truyện tranh hội tụ từ viền khung hình', defaultIntensity: 0.76, defaultSpeed: 1.8, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #09090b, #f8fafc)' },
+  { id: 'thermal_plasma', shaderIndex: 47, name: 'Plasma Violet Heat', category: 'stylize', categoryLabel: 'Nghệ thuật', desc: 'Dải màu tầm nhiệt tím vàng tương phản cực mạnh', defaultIntensity: 0.85, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #4c1d95, #f59e0b)' },
+  { id: 'glass_refract', shaderIndex: 48, name: 'Liquid Glass Ripple', category: 'light', categoryLabel: 'Ánh sáng', desc: 'Khúc xạ kính lỏng Tahoe chuyển động mượt qua khung hình', defaultIntensity: 0.72, defaultSpeed: 1, defaultScale: 1, previewGradient: 'linear-gradient(135deg, #0891b2, #e0f2fe)' },
 ];
 
 export const VFX_BY_ID: Record<string, VfxPreset> = Object.fromEntries(VFX_CATALOG.map((v) => [v.id, v]));

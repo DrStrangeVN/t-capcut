@@ -636,6 +636,100 @@ void main() {
     float edge = clamp((length(sx) + length(sy)) * 2.5, 0.0, 1.0);
     vec3 ink = mix(vec3(0.96, 0.95, 0.92), vec3(0.1, 0.11, 0.14), edge);
     col = mix(col, ink, clamp(inten, 0.0, 1.0));
+  } else if (uVfxType == 37) { // perlin_shake
+    float nX = (noise2d(vec2(t * 4.2, 1.3)) - 0.5) * 0.045 * inten;
+    float nY = (noise2d(vec2(3.7, t * 4.6)) - 0.5) * 0.045 * inten;
+    float ang = (noise2d(vec2(t * 2.5, 8.1)) - 0.5) * 0.03 * inten;
+    vec2 d = (uv - 0.5) * (1.0 - 0.09 * inten);
+    vec2 ruv = vec2(d.x * cos(ang) - d.y * sin(ang), d.x * sin(ang) + d.y * cos(ang)) + 0.5 + vec2(nX, nY);
+    col = (texture(uTexture, clamp(ruv, 0.0, 1.0)).rgb + texture(uTexture, clamp(ruv - vec2(nX, nY) * 0.35, 0.0, 1.0)).rgb) * 0.5;
+  } else if (uVfxType == 38) { // skin_beauty (Bilateral Smoothing)
+    vec3 center = col;
+    vec3 acc = center;
+    float wSum = 1.0;
+    for (int xi = -2; xi <= 2; xi++) {
+      for (int yi = -2; yi <= 2; yi++) {
+        if (xi == 0 && yi == 0) continue;
+        vec3 s = texture(uTexture, clamp(uv + vec2(float(xi), float(yi)) * texel * 2.8 * sc, 0.0, 1.0)).rgb;
+        float diff = dot(s - center, s - center);
+        float w = exp(-diff * 36.0);
+        acc += s * w;
+        wSum += w;
+      }
+    }
+    col = mix(center, acc / wSum, clamp(inten, 0.0, 1.0));
+  } else if (uVfxType == 39) { // radial_zoom_fast
+    float beat = pow(abs(sin(t * 5.4)), 2.5);
+    vec2 dir = (uv - 0.5) * (0.04 + 0.06 * beat) * inten * sc;
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < 8; i++) {
+      acc += texture(uTexture, clamp(uv - dir * (float(i) / 7.0), 0.0, 1.0)).rgb;
+    }
+    col = acc / 8.0;
+  } else if (uVfxType == 40) { // beat_rgb_split
+    float beat = pow(abs(sin(t * 6.283)), 4.0) * 0.036 * inten * sc;
+    col = vec3(
+      texture(uTexture, clamp(uv + vec2(beat, beat * 0.3), 0.0, 1.0)).r,
+      col.g,
+      texture(uTexture, clamp(uv - vec2(beat, beat * 0.3), 0.0, 1.0)).b
+    );
+  } else if (uVfxType == 41) { // crt_curved
+    vec2 cc = uv - 0.5;
+    vec2 warp = uv + cc * dot(cc, cc) * 0.36 * inten;
+    if (warp.x < 0.0 || warp.x > 1.0 || warp.y < 0.0 || warp.y > 1.0) {
+      col = vec3(0.01);
+    } else {
+      vec3 c = texture(uTexture, warp).rgb;
+      float ph = 0.78 + 0.22 * sin(warp.y * uResolution.y * 1.15);
+      col = c * ph + vec3(0.0, 0.03, 0.04) * inten;
+    }
+  } else if (uVfxType == 42) { // rain_lens
+    vec2 grid = vec2(22.0, 12.0) * sc;
+    vec2 gv = fract(uv * grid + vec2(0.0, t * 0.85)) - 0.5;
+    float drop = smoothstep(0.32, 0.08, length(gv * vec2(1.0, 0.65))) * step(0.6, hash21(floor(uv * grid + vec2(0.0, floor(t * 0.85)))));
+    vec2 refractUv = clamp(uv - gv * drop * 0.06 * inten, 0.0, 1.0);
+    col = texture(uTexture, refractUv).rgb + vec3(0.18, 0.25, 0.35) * drop * inten * 0.4;
+  } else if (uVfxType == 43) { // subject_neon_glow
+    vec3 sx = texture(uTexture, clamp(uv + vec2(texel.x * 2.5, 0.0), 0.0, 1.0)).rgb - texture(uTexture, clamp(uv - vec2(texel.x * 2.5, 0.0), 0.0, 1.0)).rgb;
+    vec3 sy = texture(uTexture, clamp(uv + vec2(0.0, texel.y * 2.5), 0.0, 1.0)).rgb - texture(uTexture, clamp(uv - vec2(0.0, texel.y * 2.5), 0.0, 1.0)).rgb;
+    float edge = smoothstep(0.18, 0.72, length(sx) + length(sy));
+    vec3 halo = hsv2rgb(vec3(fract(t * 0.18 + uv.y * 0.4), 0.9, 1.0)) * edge * 1.9;
+    col = min(vec3(1.0), col + halo * inten);
+  } else if (uVfxType == 44) { // miniature_tilt
+    float amt = smoothstep(0.12, 0.35, abs(uv.y - 0.5));
+    vec3 acc = vec3(0.0);
+    float rad = 7.5 * inten * amt * sc;
+    for (int x = -1; x <= 1; x++) {
+      for (int y = -1; y <= 1; y++) {
+        acc += texture(uTexture, clamp(uv + vec2(float(x), float(y)) * texel * rad, 0.0, 1.0)).rgb;
+      }
+    }
+    vec3 satCol = acc / 9.0;
+    float lum = dot(satCol, vec3(0.2126, 0.7152, 0.0722));
+    col = mix(vec3(lum), satCol, 1.0 + 0.5 * inten);
+  } else if (uVfxType == 45) { // cine_halation_pro
+    vec3 bloom = vec3(0.0);
+    for (int i = -2; i <= 2; i++) {
+      for (int j = -2; j <= 2; j++) {
+        vec3 s = texture(uTexture, clamp(uv + vec2(float(i), float(j)) * texel * 6.0 * sc, 0.0, 1.0)).rgb;
+        bloom += s * smoothstep(0.58, 0.95, dot(s, vec3(0.3, 0.6, 0.1)));
+      }
+    }
+    float grain = (hash21(uv * 320.0 + floor(t * 24.0)) - 0.5) * 0.09 * inten;
+    col = col + (bloom / 25.0) * vec3(1.5, 0.28, 0.1) * inten + grain;
+  } else if (uVfxType == 46) { // speed_lines
+    vec2 d = uv - 0.5;
+    float ang = atan(d.y, d.x);
+    float ray = pow(abs(sin(ang * 42.0 * sc + floor(t * 16.0) * 3.1)), 14.0);
+    float edgeMask = smoothstep(0.24, 0.55, length(d));
+    col = mix(col, vec3(1.0), ray * edgeMask * 0.75 * inten);
+  } else if (uVfxType == 47) { // thermal_plasma
+    float lum = clamp(dot(col, vec3(0.3, 0.59, 0.11)), 0.0, 1.0);
+    vec3 plasma = mix(vec3(0.08, 0.02, 0.25), mix(vec3(0.8, 0.12, 0.55), vec3(0.99, 0.85, 0.18), lum), smoothstep(0.15, 0.95, lum));
+    col = mix(col, plasma, clamp(inten, 0.0, 1.0));
+  } else if (uVfxType == 48) { // glass_refract
+    vec2 wave = vec2(sin(uv.y * 22.0 + t * 2.8), cos(uv.x * 18.0 - t * 2.2)) * 0.015 * inten * sc;
+    col = texture(uTexture, clamp(uv + wave, 0.0, 1.0)).rgb + vec3(0.04, 0.09, 0.12) * inten;
   }
 
   fragColor = vec4(clamp(col, 0.0, 1.0), alpha);
@@ -804,6 +898,70 @@ void main() {
     fragColor = mix(texture(uTexFrom, clamp(suv, 0.0, 1.0)), texture(uTexTo, clamp(suv, 0.0, 1.0)), e); return;
   }
 
+  // 25..32: 3D Cube, Flip, Page Peel, Matte & Hyper Transitions
+  if (uTransType == 25) { // cube_turn
+    if (uv.x < 1.0 - e) {
+      float fx = uv.x / max(0.001, 1.0 - e);
+      float yScale = mix(1.0, 0.85, e);
+      vec2 suv = vec2(fx, (uv.y - 0.5) / yScale + 0.5);
+      fragColor = suv.y >= 0.0 && suv.y <= 1.0 ? texture(uTexFrom, suv) * (1.0 - e * 0.35) : vec4(0.02, 0.03, 0.05, 1.0);
+    } else {
+      float tx = (uv.x - (1.0 - e)) / max(0.001, e);
+      float yScale = mix(0.85, 1.0, e);
+      vec2 suv = vec2(tx, (uv.y - 0.5) / yScale + 0.5);
+      fragColor = suv.y >= 0.0 && suv.y <= 1.0 ? texture(uTexTo, suv) * (0.65 + e * 0.35) : vec4(0.02, 0.03, 0.05, 1.0);
+    }
+    return;
+  }
+  if (uTransType == 26) { // card_flip
+    float scaleX = abs(cos(e * 3.14159));
+    vec2 suv = vec2((uv.x - 0.5) / max(0.02, scaleX) + 0.5, uv.y);
+    if (suv.x < 0.0 || suv.x > 1.0) { fragColor = vec4(0.02, 0.03, 0.06, 1.0); return; }
+    fragColor = e < 0.5 ? texture(uTexFrom, suv) : texture(uTexTo, suv); return;
+  }
+  if (uTransType == 27) { // page_peel
+    float diag = uv.x * 0.65 + (1.0 - uv.y) * 0.35;
+    float edge = 1.0 - e * 1.1;
+    if (diag > edge + 0.06) { fragColor = toCol; return; }
+    if (diag > edge - 0.04) { fragColor = vec4(mix(fromCol.rgb, vec3(0.95), 0.45), 1.0); return; }
+    fragColor = fromCol; return;
+  }
+  if (uTransType == 28) { // luma_fade
+    float lum = dot(fromCol.rgb, vec3(0.299, 0.587, 0.114));
+    float m = smoothstep(e - 0.12, e + 0.12, lum * 0.85 + 0.075);
+    fragColor = mix(toCol, fromCol, m); return;
+  }
+  if (uTransType == 29) { // whip_zoom_blur
+    float z = sin(p * 3.14159) * 0.45;
+    vec2 uA = (uv - 0.5) * (1.0 - z) + 0.5;
+    vec2 uB = (uv - 0.5) * (1.0 + z * 0.7) + 0.5;
+    fragColor = mix(texture(uTexFrom, clamp(uA, 0.0, 1.0)), texture(uTexTo, clamp(uB, 0.0, 1.0)), e); return;
+  }
+  if (uTransType == 30) { // morph_dissolve
+    vec2 shift = (toCol.rg - fromCol.rg) * sin(p * 3.14159) * 0.025;
+    fragColor = mix(texture(uTexFrom, clamp(uv + shift, 0.0, 1.0)), texture(uTexTo, clamp(uv - shift, 0.0, 1.0)), e); return;
+  }
+  if (uTransType == 31) { // mosaic_tiles
+    vec2 cell = fract(uv * 6.0) - 0.5;
+    float tileDelay = hash21(floor(uv * 6.0)) * 0.45;
+    float tp = clamp((e - tileDelay) / 0.55, 0.0, 1.0);
+    fragColor = tp > 0.5 ? texture(uTexTo, clamp(uv + cell * (1.0 - tp) * 0.08, 0.0, 1.0)) : fromCol; return;
+  }
+  if (uTransType == 32) { // radial_rgb_flash
+    float peak = sin(p * 3.14159);
+    vec2 d = (uv - 0.5) * 0.06 * peak;
+    vec4 base = mix(fromCol, toCol, step(0.5, p));
+    float rCh = p < 0.5 ? texture(uTexFrom, clamp(uv + d, 0.0, 1.0)).r : texture(uTexTo, clamp(uv + d, 0.0, 1.0)).r;
+    float bCh = p < 0.5 ? texture(uTexFrom, clamp(uv - d, 0.0, 1.0)).b : texture(uTexTo, clamp(uv - d, 0.0, 1.0)).b;
+    fragColor = vec4(
+      rCh + peak * 0.4,
+      base.g + peak * 0.35,
+      bCh + peak * 0.4,
+      1.0
+    );
+    return;
+  }
+
   // 24: shake_cut
   float amp = sin(p * 3.14159) * 0.03;
   vec2 sh = vec2(sin(p * 48.0), cos(p * 37.0)) * amp;
@@ -957,6 +1115,8 @@ export class WebGLCompositor {
   private lastVideoTimes = new Map<string, number>();
   private lutTextures = new Map<string, { tex: WebGLTexture; size: number }>();
   private curvesTexture: WebGLTexture;
+  private behindOverlayTex: WebGLTexture | null = null;
+  private hslScratch = new Float32Array(24);
   private lastCurvesSig = '';
   private lastCurvesActive = false;
 
@@ -1172,6 +1332,15 @@ void main() {
     let tex = this.clipTextures.get(key);
     const isNew = !tex;
     if (!tex) {
+      if (this.clipTextures.size > 32) {
+        const oldestKey = this.clipTextures.keys().next().value;
+        if (oldestKey) {
+          const oldTex = this.clipTextures.get(oldestKey);
+          if (oldTex) gl.deleteTexture(oldTex);
+          this.clipTextures.delete(oldestKey);
+          this.lastVideoTimes.delete(oldestKey);
+        }
+      }
       tex = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -1209,7 +1378,8 @@ void main() {
     adj?: ColorGradeState,
     targetFbo: WebGLFramebuffer | null = null,
     forceUpload = false,
-    bypassGrade = false
+    bypassGrade = false,
+    ignoreMattingMask = false
   ): boolean {
     if (!clip.assetId) return false;
     const el = mediaElements.get(clip.id) ?? mediaElements.get(clip.assetId);
@@ -1239,7 +1409,7 @@ void main() {
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.uniform1i(this.uLoc.uTexture, 0);
 
-    const maskEl = clip.aiMattingEnabled ? (maskElements.get(clip.id) ?? maskElements.get(clip.assetId)) : undefined;
+    const maskEl = !ignoreMattingMask && clip.aiMattingEnabled ? (maskElements.get(clip.id) ?? maskElements.get(clip.assetId)) : undefined;
     if (maskEl && maskEl.videoWidth > 0) {
       const mTex = this.getOrUpdateTexture(`${clip.id}_mask`, maskEl, forceUpload);
       gl.activeTexture(gl.TEXTURE1);
@@ -1324,7 +1494,7 @@ void main() {
       gl.uniform3fv(this.uLoc.uGamma, cg.wheels.gamma);
       gl.uniform3fv(this.uLoc.uGain, cg.wheels.gain);
 
-      const hslArr = new Float32Array(24);
+      const hslArr = this.hslScratch;
       let anyHsl = false;
       HSL_KEYS.forEach((k, idx) => {
         const entry = cg.hsl[k];
@@ -1432,11 +1602,19 @@ void main() {
     playheadUs: Microseconds,
     mediaElements: Map<string, HTMLVideoElement | HTMLImageElement>,
     maskElements: Map<string, HTMLVideoElement>,
-    options?: { nestedScopeId?: string | null; forceUpload?: boolean; skipGlow?: boolean; compareSplitX?: number | null }
+    options?: {
+      nestedScopeId?: string | null;
+      forceUpload?: boolean;
+      skipGlow?: boolean;
+      compareSplitX?: number | null;
+      previewScale?: number;
+      behindOverlayCanvas?: HTMLCanvasElement | null;
+    }
   ): string | null {
     const gl = this.gl;
-    const w = project.settings.width;
-    const h = project.settings.height;
+    const pScale = options?.previewScale && options.previewScale > 0 && options.previewScale < 1 ? options.previewScale : 1;
+    const w = Math.max(16, Math.round(project.settings.width * pScale) & ~1);
+    const h = Math.max(16, Math.round(project.settings.height * pScale) & ~1);
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
@@ -1474,6 +1652,10 @@ void main() {
       options?.compareSplitX != null
         ? Math.max(1, Math.min(w - 1, Math.round(options.compareSplitX * w)))
         : null;
+    const hasBehindSandwich = Boolean(
+      options?.behindOverlayCanvas &&
+        activeVisualClips.some((c) => c.aiMattingEnabled && c.assetId && (maskElements.get(c.id) ?? maskElements.get(c.assetId)))
+    );
 
     if (splitPx !== null) {
       // Left side: Raw Original (bypass Grade + LUT + VFX Stack)
@@ -1500,7 +1682,7 @@ void main() {
           gl.enable(gl.SCISSOR_TEST);
           gl.scissor(splitPx, 0, w - splitPx, h);
         }
-        this.drawGradedBaseClip(clip, localUs, w, h, mediaElements, maskElements, globalAdj, null, options?.forceUpload);
+        this.drawGradedBaseClip(clip, localUs, w, h, mediaElements, maskElements, globalAdj, null, options?.forceUpload, false, hasBehindSandwich);
         continue;
       }
 
@@ -1515,7 +1697,9 @@ void main() {
         maskElements,
         globalAdj,
         this.fxFboA,
-        options?.forceUpload
+        options?.forceUpload,
+        false,
+        hasBehindSandwich
       );
       if (!drawn) continue;
 
@@ -1596,6 +1780,29 @@ void main() {
       this.blitTextureToTarget(finalGlobalTex, null, w, h);
     }
 
+    // Text-Behind-Subject Depth Sandwich: composite behind-subject texts + foreground matted subjects on top!
+    if (options?.behindOverlayCanvas && activeVisualClips.some((c) => c.aiMattingEnabled && c.assetId && (maskElements.get(c.id) ?? maskElements.get(c.assetId)))) {
+      if (!this.behindOverlayTex) {
+        this.behindOverlayTex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this.behindOverlayTex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      }
+      gl.disable(gl.SCISSOR_TEST);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.behindOverlayTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, options.behindOverlayCanvas);
+      this.blitTextureToTarget(this.behindOverlayTex, null, w, h);
+
+      for (const clip of activeVisualClips) {
+        if (!clip.aiMattingEnabled) continue;
+        const localUs = playheadUs - clip.timelineStartUs;
+        this.drawGradedBaseClip(clip, localUs, w, h, mediaElements, maskElements, globalAdj, null, options?.forceUpload, false, false);
+      }
+    }
+
     gl.disable(gl.SCISSOR_TEST);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindVertexArray(null);
@@ -1638,6 +1845,7 @@ void main() {
     this.lutTextures.clear();
     this.customPrograms.forEach((p) => gl.deleteProgram(p.program));
     this.customPrograms.clear();
+    if (this.behindOverlayTex) gl.deleteTexture(this.behindOverlayTex);
     gl.deleteTexture(this.curvesTexture);
     gl.deleteTexture(this.backTexture);
     gl.deleteTexture(this.fxTexA);

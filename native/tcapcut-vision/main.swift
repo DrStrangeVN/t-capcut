@@ -491,6 +491,151 @@ func runTranscribeSpeech(inputPath: String, localeId: String, outputJsonPath: St
     print("{\"ok\":true,\"segments\":\(segments.count)}")
 }
 
+func runListFonts() {
+    let cfArr = CTFontManagerCopyAvailableFontFamilyNames() as? [String] ?? []
+    let sorted = Array(Set(cfArr)).sorted()
+    printJson(["fonts": sorted])
+}
+
+func runObjectMatting(inputPath: String, outputPath: String, normX: Double, normY: Double) throws {
+    let url = URL(fileURLWithPath: inputPath)
+    let asset = AVURLAsset(url: url)
+
+    let sem = DispatchSemaphore(value: 0)
+    var videoTrack: AVAssetTrack?
+    var naturalSize = CGSize(width: 1280, height: 720)
+    var nominalFps: Float = 30.0
+    var preferredTransform = CGAffineTransform.identity
+
+    Task {
+        let tracks = try? await asset.loadTracks(withMediaType: .video)
+        videoTrack = tracks?.first
+        if let vt = videoTrack {
+            naturalSize = (try? await vt.load(.naturalSize)) ?? naturalSize
+            nominalFps = (try? await vt.load(.nominalFrameRate)) ?? 30.0
+            preferredTransform = (try? await vt.load(.preferredTransform)) ?? .identity
+        }
+        sem.signal()
+    }
+    sem.wait()
+
+    guard let track = videoTrack else {
+        throw NSError(domain: "tcapcut-vision", code: 20, userInfo: [NSLocalizedDescriptionKey: "No video track found"])
+    }
+
+    let width = max(2, Int(abs(naturalSize.width)) & ~1)
+    let height = max(2, Int(abs(naturalSize.height)) & ~1)
+
+    let reader = try AVAssetReader(asset: asset)
+    let readerOutput = AVAssetReaderTrackOutput(
+        track: track,
+        outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+    )
+    readerOutput.alwaysCopiesSampleData = false
+    guard reader.canAdd(readerOutput) else {
+        throw NSError(domain: "tcapcut-vision", code: 21, userInfo: [NSLocalizedDescriptionKey: "Cannot add reader output"])
+    }
+    reader.add(readerOutput)
+
+    let outUrl = URL(fileURLWithPath: outputPath)
+    if FileManager.default.fileExists(atPath: outputPath) {
+        try FileManager.default.removeItem(at: outUrl)
+    }
+
+    let writer = try AVAssetWriter(outputURL: outUrl, fileType: .mp4)
+    let writerInput = AVAssetWriterInput(
+        mediaType: .video,
+        outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: 4_000_000,
+                AVVideoExpectedSourceFrameRateKey: nominalFps
+            ]
+        ]
+    )
+    writerInput.expectsMediaDataInRealTime = false
+    writerInput.transform = preferredTransform
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+        assetWriterInput: writerInput,
+        sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height
+        ]
+    )
+    guard writer.canAdd(writerInput) else {
+        throw NSError(domain: "tcapcut-vision", code: 22, userInfo: [NSLocalizedDescriptionKey: "Cannot add writer input"])
+    }
+    writer.add(writerInput)
+    guard reader.startReading() else {
+        throw NSError(domain: "tcapcut-vision", code: 23, userInfo: [NSLocalizedDescriptionKey: "Reader failed"])
+    }
+    writer.startWriting()
+    writer.startSession(atSourceTime: .zero)
+
+    let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    var frameCount = 0
+
+    while reader.status == .reading {
+        guard let sampleBuffer = readerOutput.copyNextSampleBuffer() else { break }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+
+        var renderedMask: CIImage?
+        if #available(macOS 14.0, *) {
+            let fgRequest = VNGenerateForegroundInstanceMaskRequest()
+            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+            try? handler.perform([fgRequest])
+            if let obs = fgRequest.results?.first, !obs.allInstances.isEmpty {
+                let instanceMap = obs.instanceMask
+                CVPixelBufferLockBaseAddress(instanceMap, .readOnly)
+                let mw = CVPixelBufferGetWidth(instanceMap)
+                let mh = CVPixelBufferGetHeight(instanceMap)
+                let bpr = CVPixelBufferGetBytesPerRow(instanceMap)
+                var chosenInstances = obs.allInstances
+                if let base = CVPixelBufferGetBaseAddress(instanceMap) {
+                    let px = min(mw - 1, max(0, Int(round(normX * Double(mw - 1)))))
+                    let py = min(mh - 1, max(0, Int(round((1.0 - normY) * Double(mh - 1)))))
+                    let label = base.advanced(by: py * bpr + px).load(as: UInt8.self)
+                    if label > 0 && obs.allInstances.contains(Int(label)) {
+                        chosenInstances = IndexSet(integer: Int(label))
+                    }
+                }
+                CVPixelBufferUnlockBaseAddress(instanceMap, .readOnly)
+
+                if let maskBuf = try? obs.generateScaledMaskForImage(forInstances: chosenInstances, from: handler) {
+                    let mCI = CIImage(cvPixelBuffer: maskBuf)
+                    renderedMask = mCI.transformed(by: CGAffineTransform(
+                        scaleX: CGFloat(width) / max(1, mCI.extent.width),
+                        y: CGFloat(height) / max(1, mCI.extent.height)
+                    ))
+                }
+            }
+        }
+
+        while !writerInput.isReadyForMoreMediaData {
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+        if let maskImg = renderedMask, let pool = adaptor.pixelBufferPool {
+            var outBuffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outBuffer)
+            if let dst = outBuffer {
+                ciContext.render(maskImg, to: dst)
+                adaptor.append(dst, withPresentationTime: pts)
+                frameCount += 1
+            }
+        }
+    }
+
+    writerInput.markAsFinished()
+    let finishSem = DispatchSemaphore(value: 0)
+    writer.finishWriting { finishSem.signal() }
+    finishSem.wait()
+    print("{\"ok\":true,\"frames\":\(frameCount),\"output\":\"\(outputPath)\"}")
+}
+
 let args = CommandLine.arguments
 if args.count < 2 {
     fputs("Usage: tcapcut-vision <benchmark|face-track|person-matting> ...\n", stderr)
@@ -526,6 +671,19 @@ do {
             exit(1)
         }
         try runTranscribeSpeech(inputPath: args[2], localeId: args[3], outputJsonPath: args[4])
+    case "object-matting":
+        guard args.count >= 6 else {
+            fputs("Usage: tcapcut-vision object-matting <input> <output_mask.mp4> <normX> <normY>\n", stderr)
+            exit(1)
+        }
+        try runObjectMatting(
+            inputPath: args[2],
+            outputPath: args[3],
+            normX: Double(args[4]) ?? 0.5,
+            normY: Double(args[5]) ?? 0.5
+        )
+    case "fonts":
+        runListFonts()
     default:
         fputs("Unknown command: \(args[1])\n", stderr)
         exit(1)

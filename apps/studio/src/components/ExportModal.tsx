@@ -16,6 +16,7 @@ export const ExportModal: React.FC = () => {
 
   const [mode, setMode] = useState<'hardware' | 'wysiwyg-pipe' | 'lossless-hybrid' | 'audio-only' | 'subtitle-only'>('hardware');
   const [codec, setCodec] = useState<'h264' | 'hevc' | 'prores'>('h264');
+  const [tenBitHevc, setTenBitHevc] = useState(false);
   const [fps, setFps] = useState<number>(30);
   const [subtitleFormat, setSubtitleFormat] = useState<'srt' | 'ass' | 'vtt'>('ass');
   const [burnSubtitles, setBurnSubtitles] = useState(true);
@@ -66,6 +67,7 @@ export const ExportModal: React.FC = () => {
       if (mode === 'wysiwyg-pipe') {
         const res = await runWysiwygClientExport(project, {
           codec,
+          tenBitHevc,
           fps,
           burnSubtitles,
           loudnorm,
@@ -90,6 +92,7 @@ export const ExportModal: React.FC = () => {
       const { jobId } = await engineApi.startExport(project.id, {
         mode,
         codec,
+        tenBitHevc,
         fps,
         burnSubtitles,
         loudnorm,
@@ -254,6 +257,12 @@ export const ExportModal: React.FC = () => {
             <input type="checkbox" checked={loudnorm} onChange={(e) => setLoudnorm(e.target.checked)} />
             Chuẩn hóa âm lượng -14 LUFS
           </label>
+          {codec === 'hevc' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#a78bfa' }}>
+              <input type="checkbox" checked={tenBitHevc} onChange={(e) => setTenBitHevc(e.target.checked)} />
+              10-bit HEVC (p010le)
+            </label>
+          )}
           {hasRange && (
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#22d3ee' }}>
               <input type="checkbox" checked={useInOutRange} onChange={(e) => setUseInOutRange(e.target.checked)} />

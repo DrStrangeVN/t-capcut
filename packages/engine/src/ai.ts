@@ -469,3 +469,335 @@ export async function runAppleVisionFaceTrack(
   await execFileAsync(visionBinPath, ['face-track', asset.sourcePath, outPath], EXEC_OPTS);
   return JSON.parse(fs.readFileSync(outPath, 'utf8')) as FaceTrackResult;
 }
+
+/**
+ * Click-to-Segment Object Matting via Apple Vision VNGenerateForegroundInstanceMaskRequest.
+ */
+export async function runAppleVisionObjectMatting(
+  asset: MediaAsset,
+  cacheDir: string,
+  visionBinPath: string,
+  normX = 0.5,
+  normY = 0.5
+): Promise<string> {
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const outPath = path.join(cacheDir, `${asset.id}_obj_mask_${Date.now()}.mp4`);
+  await execFileAsync(
+    visionBinPath,
+    ['object-matting', asset.sourcePath, outPath, normX.toFixed(4), normY.toFixed(4)],
+    EXEC_OPTS
+  );
+  return outPath;
+}
+
+/**
+ * Lists installed macOS system fonts cleanly via compiled helper.
+ */
+export async function listSystemFonts(visionBinPath: string | null): Promise<string[]> {
+  if (!visionBinPath || !fs.existsSync(visionBinPath)) {
+    return ['Inter', 'SF Pro Display', 'Helvetica Neue', 'Avenir Next', 'Georgia', 'Menlo'];
+  }
+  try {
+    const { stdout } = await execFileAsync(visionBinPath, ['fonts'], EXEC_OPTS);
+    const parsed = JSON.parse(stdout) as { fonts?: string[] };
+    return (parsed.fonts ?? []).filter((f) => Boolean(f && f.trim()));
+  } catch {
+    return ['Inter', 'SF Pro Display', 'Helvetica Neue', 'Avenir Next', 'Georgia', 'Menlo'];
+  }
+}
+
+/**
+ * Offline macOS Neural/Speech TTS Voiceover (.m4a) + word-synced TranscriptSegment.
+ */
+export async function generateLocalTtsVoiceover(
+  text: string,
+  language: 'vi' | 'en',
+  outDir: string,
+  voiceName?: string
+): Promise<{ audioPath: string; durationUs: number; segment: TranscriptSegment }> {
+  fs.mkdirSync(outDir, { recursive: true });
+  const id = `tts_${Date.now()}`;
+  const aiffPath = path.join(outDir, `${id}.aiff`);
+  const m4aPath = path.join(outDir, `${id}.m4a`);
+  const resolvedVoice = voiceName || (language === 'vi' ? 'Linh' : 'Samantha');
+
+  try {
+    await execFileAsync('say', ['-v', resolvedVoice, '-o', aiffPath, text], EXEC_OPTS);
+  } catch {
+    // Fallback default voice if requested voice is unavailable
+    await execFileAsync('say', ['-o', aiffPath, text], EXEC_OPTS);
+  }
+
+  try {
+    await execFileAsync(
+      'ffmpeg',
+      ['-y', '-i', aiffPath, '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', m4aPath],
+      EXEC_OPTS
+    );
+    const { stdout } = await execFileAsync(
+      'ffprobe',
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', m4aPath],
+      EXEC_OPTS
+    );
+    const durSec = Math.max(0.4, Number.parseFloat(stdout.trim()) || 1.5);
+    const durationUs = Math.round(durSec * US_PER_SEC);
+    const rawWords = text.trim().split(/\s+/).filter(Boolean);
+    const perWordUs = Math.max(60_000, Math.floor(durationUs / Math.max(1, rawWords.length)));
+    const segment: TranscriptSegment = {
+      id: `seg_${id}`,
+      startUs: 0,
+      endUs: durationUs,
+      text: text.trim(),
+      words: rawWords.map((w, idx) => ({
+        text: w,
+        startUs: idx * perWordUs,
+        endUs: idx === rawWords.length - 1 ? durationUs : (idx + 1) * perWordUs,
+      })),
+    };
+    return { audioPath: m4aPath, durationUs, segment };
+  } finally {
+    if (fs.existsSync(aiffPath)) fs.unlinkSync(aiffPath);
+  }
+}
+
+export interface ViralHighlight {
+  id: string;
+  startUs: number;
+  endUs: number;
+  score: number;
+  title: string;
+}
+
+/**
+ * AI Auto-Highlight Extractor: scores audio energy + scene activity + speech hook phrases to locate Viral Shorts.
+ */
+export async function detectViralHighlights(
+  asset: MediaAsset,
+  tempDir: string
+): Promise<ViralHighlight[]> {
+  const totalUs = Math.max(US_PER_SEC, asset.durationUs);
+  const clipLenUs = Math.min(totalUs, Math.max(3 * US_PER_SEC, Math.min(12 * US_PER_SEC, Math.round(totalUs * 0.45))));
+  const scenes = asset.kind === 'video' ? asset.scenesUs ?? (await detectScenes(asset.sourcePath).catch(() => [])) : [];
+  const beats = asset.hasAudio ? asset.beatsUs ?? (await detectBeats(asset.sourcePath, tempDir).catch(() => [])) : [];
+
+  const candidateStarts = new Set<number>([0]);
+  scenes.forEach((s) => candidateStarts.add(Math.max(0, Math.min(totalUs - clipLenUs, s))));
+  beats.slice(0, 12).forEach((b) => candidateStarts.add(Math.max(0, Math.min(totalUs - clipLenUs, b))));
+  if (totalUs > clipLenUs * 1.5) {
+    candidateStarts.add(Math.round(totalUs * 0.25));
+    candidateStarts.add(Math.round(totalUs * 0.55));
+  }
+
+  const hookWords = /bí quyết|quan trọng|lưu ý|đừng|ngay|top|siêu|hack|bùng nổ|secret|best|tip|how|why/i;
+  const scored: ViralHighlight[] = [];
+
+  Array.from(candidateStarts).forEach((startUs, idx) => {
+    const endUs = Math.min(totalUs, startUs + clipLenUs);
+    const spanScenes = scenes.filter((s) => s >= startUs && s <= endUs).length;
+    const spanBeats = beats.filter((b) => b >= startUs && b <= endUs).length;
+    const spanTx = (asset.transcript ?? []).filter((t) => t.startUs >= startUs && t.startUs <= endUs);
+    const hasHook = spanTx.some((t) => hookWords.test(t.text));
+    const score = Math.min(99, 62 + spanScenes * 6 + Math.min(18, spanBeats * 2) + (hasHook ? 15 : 0) + (idx === 0 ? 5 : 0));
+    const title = spanTx[0]?.text.slice(0, 38) || `Highlight #${idx + 1} (${(startUs / US_PER_SEC).toFixed(1)}s)`;
+    scored.push({
+      id: `hl_${idx}_${startUs}`,
+      startUs,
+      endUs,
+      score,
+      title,
+    });
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  const picked: ViralHighlight[] = [];
+  for (const cand of scored) {
+    if (picked.every((p) => cand.endUs <= p.startUs + 500_000 || cand.startUs >= p.endUs - 500_000)) {
+      picked.push(cand);
+      if (picked.length >= 4) break;
+    }
+  }
+  return picked.length > 0 ? picked : scored.slice(0, 3);
+}
+
+const FILLER_REGEX = /^(ờ+|à+|ừm+|um+|uh+|er+|hmm+|kiểu như|thì là)[.,!?]*$/i;
+
+export function findFillerWordSpans(segments: TranscriptSegment[]): Array<{ startUs: number; endUs: number; word: string }> {
+  const spans: Array<{ startUs: number; endUs: number; word: string }> = [];
+  for (const seg of segments) {
+    for (const w of seg.words ?? []) {
+      if (FILLER_REGEX.test(w.text.trim())) {
+        spans.push({
+          startUs: Math.max(0, w.startUs - 30_000),
+          endUs: w.endUs + 30_000,
+          word: w.text,
+        });
+      }
+    }
+  }
+  return spans;
+}
+
+export async function stabilizeVideoFfmpeg(asset: MediaAsset, cacheDir: string): Promise<string> {
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const outPath = path.join(cacheDir, `${asset.id}_stabilized.mp4`);
+  if (fs.existsSync(outPath)) return outPath;
+  await execFileAsync(
+    'ffmpeg',
+    [
+      '-y',
+      '-i', asset.sourcePath,
+      '-vf', 'deshake=rx=16:ry=16:edge=mirror,unsharp=3:3:0.3',
+      '-c:v', 'h264_videotoolbox',
+      '-b:v', '10000k',
+      '-c:a', 'copy',
+      outPath,
+    ],
+    EXEC_OPTS
+  );
+  return outPath;
+}
+
+export async function upscaleVideoFfmpeg(asset: MediaAsset, cacheDir: string): Promise<string> {
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const outPath = path.join(cacheDir, `${asset.id}_2x_upscale.mp4`);
+  if (fs.existsSync(outPath)) return outPath;
+  const targetW = Math.min(3840, (asset.width || 1280) * 2) & ~1;
+  const targetH = Math.min(2160, (asset.height || 720) * 2) & ~1;
+  await execFileAsync(
+    'ffmpeg',
+    [
+      '-y',
+      '-i', asset.sourcePath,
+      '-vf', `scale=${targetW}:${targetH}:flags=lanczos,unsharp=5:5:0.75:5:5:0.0`,
+      '-c:v', 'h264_videotoolbox',
+      '-b:v', '18000k',
+      '-c:a', 'copy',
+      outPath,
+    ],
+    EXEC_OPTS
+  );
+  return outPath;
+}
+
+export async function separateAudioStems(
+  asset: MediaAsset,
+  mediaDir: string
+): Promise<{ vocalsPath: string; instrumentalPath: string }> {
+  fs.mkdirSync(mediaDir, { recursive: true });
+  const vocalsPath = path.join(mediaDir, `${asset.id}_vocals.m4a`);
+  const instrumentalPath = path.join(mediaDir, `${asset.id}_instrumental.m4a`);
+
+  // Center-extracted vocal bus (bandpass + mid sum) & Side-subtracted instrumental bus
+  await execFileAsync(
+    'ffmpeg',
+    [
+      '-y',
+      '-i', asset.sourcePath,
+      '-vn',
+      '-af', 'aformat=channel_layouts=stereo,pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1,highpass=f=180,lowpass=f=6500',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      vocalsPath,
+    ],
+    EXEC_OPTS
+  );
+
+  await execFileAsync(
+    'ffmpeg',
+    [
+      '-y',
+      '-i', asset.sourcePath,
+      '-vn',
+      '-af', 'aformat=channel_layouts=stereo,pan=stereo|c0=0.7*c0-0.7*c1|c1=0.7*c1-0.7*c0',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      instrumentalPath,
+    ],
+    EXEC_OPTS
+  );
+  return { vocalsPath, instrumentalPath };
+}
+
+/**
+ * Smart Music Remix: loops middle body cleanly and crossfades to natural Outro so music fits targetDurationUs.
+ */
+export async function smartRemixAudio(
+  inputPath: string,
+  sourceDurationUs: number,
+  targetDurationUs: number,
+  outroStartUs: number | undefined,
+  outPath: string
+): Promise<void> {
+  const targetSec = Math.max(1.5, targetDurationUs / US_PER_SEC);
+  const srcSec = Math.max(1.5, sourceDurationUs / US_PER_SEC);
+  const outroDurSec = outroStartUs ? Math.max(1.2, Math.min(4.0, srcSec - outroStartUs / US_PER_SEC)) : Math.min(2.5, srcSec * 0.18);
+
+  if (targetSec <= srcSec) {
+    // Trim body cleanly and attach natural outro with 0.35s crossfade
+    const bodyEndSec = Math.max(0.5, targetSec - outroDurSec + 0.35);
+    const outroStartSec = Math.max(0, srcSec - outroDurSec);
+    await execFileAsync(
+      'ffmpeg',
+      [
+        '-y',
+        '-i', inputPath,
+        '-filter_complex',
+        `[0:a]atrim=start=0:end=${bodyEndSec.toFixed(3)},asetpts=PTS-STARTPTS[b];[0:a]atrim=start=${outroStartSec.toFixed(3)}:end=${srcSec.toFixed(3)},asetpts=PTS-STARTPTS[o];[b][o]acrossfade=d=0.35:c1=tri:c2=tri,atrim=0:${targetSec.toFixed(3)}[out]`,
+        '-map', '[out]',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        outPath,
+      ],
+      EXEC_OPTS
+    );
+    return;
+  }
+
+  // Video longer than track: loop body and stitch outro at tail
+  const bodyEndSec = Math.max(2, srcSec - outroDurSec);
+  const loopNeedSec = Math.max(1, targetSec - outroDurSec + 0.35);
+  const outroStartSec = Math.max(0, srcSec - outroDurSec);
+  await execFileAsync(
+    'ffmpeg',
+    [
+      '-y',
+      '-stream_loop', '-1', '-i', inputPath,
+      '-i', inputPath,
+      '-filter_complex',
+      `[0:a]atrim=start=0:end=${loopNeedSec.toFixed(3)},asetpts=PTS-STARTPTS[b];[1:a]atrim=start=${outroStartSec.toFixed(3)}:end=${srcSec.toFixed(3)},asetpts=PTS-STARTPTS[o];[b][o]acrossfade=d=0.35:c1=tri:c2=tri,atrim=0:${targetSec.toFixed(3)}[out]`,
+      '-map', '[out]',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      outPath,
+    ],
+    EXEC_OPTS
+  );
+  void bodyEndSec;
+}
+
+export interface LocalCapCutDraftSummary {
+  name: string;
+  draftPath: string;
+  modifiedAt: number;
+}
+
+export function scanLocalCapCutDrafts(): LocalCapCutDraftSummary[] {
+  const candidates = [
+    path.join(os.homedir(), 'Movies', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft'),
+    path.join(os.homedir(), 'Movies', 'JianyingPro', 'User Data', 'Projects', 'com.lveditor.draft'),
+  ];
+  const results: LocalCapCutDraftSummary[] = [];
+  for (const dir of candidates) {
+    if (!fs.existsSync(dir)) continue;
+    for (const entry of fs.readdirSync(dir)) {
+      const folder = path.join(dir, entry);
+      const draftJson = path.join(folder, 'draft_content.json');
+      if (fs.existsSync(draftJson)) {
+        const st = fs.statSync(draftJson);
+        results.push({ name: entry, draftPath: draftJson, modifiedAt: st.mtimeMs });
+      }
+    }
+  }
+  results.sort((a, b) => b.modifiedAt - a.modifiedAt);
+  return results;
+}

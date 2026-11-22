@@ -44,6 +44,9 @@ export interface MediaAsset {
   waveformPath?: string | null;
   thumbnailStripPath?: string | null;
   filmstripCols?: number;
+  objectMaskPath?: string | null;
+  stabilizedPath?: string | null;
+  upscaledPath?: string | null;
   durationUs: Microseconds;
   width: number;
   height: number;
@@ -237,17 +240,22 @@ export interface TextStyleState {
   animationDurationUs?: Microseconds;
   badgeText?: string;
   roleLabel?: string;
+  behindSubject?: boolean;
+  highlightKeywords?: string[];
+  highlightColor?: string;
 }
 
 export interface StickerState {
   presetId: string;
-  category: 'creator' | 'particle' | 'badge';
+  category: 'creator' | 'particle' | 'badge' | 'lottie';
   name: string;
   label?: string;
   primaryColor: string;
   secondaryColor: string;
   particleType?: 'snow' | 'rain' | 'dust' | 'hearts' | 'confetti' | 'bokeh' | null;
   iconType?: string;
+  lottieJson?: string | null;
+  lottieDurationSec?: number;
 }
 
 export interface TransitionConfig {
@@ -281,6 +289,17 @@ export interface AudioClipState {
   autoDucking: boolean;
   duckAmountDb: number; // e.g. -14
   voicePreset: 'none' | 'podcast' | 'megaphone' | 'deep' | 'chipmunk' | 'robot';
+  eqBands?: [number, number, number, number, number]; // dB at 80Hz, 250Hz, 1kHz, 4kHz, 12kHz (-12..+12)
+  compressorEnabled?: boolean;
+  noiseGateEnabled?: boolean;
+  pitchSemitones?: number; // -12..+12
+}
+
+export interface MotionTrackPoint {
+  timeUs: Microseconds; // Relative to clip start
+  x: number; // Normalized 0..1
+  y: number; // Normalized 0..1
+  scale?: number;
 }
 
 export interface Clip {
@@ -310,6 +329,7 @@ export interface Clip {
   autoReframeEnabled: boolean;
   prerenderHash?: string | null;
   compoundTimelineId?: string | null;
+  motionTrackPoints?: MotionTrackPoint[];
 }
 
 export interface Track {
@@ -345,6 +365,7 @@ export interface ProjectSettings {
   proxyEnabled: boolean;
   prerenderEnabled: boolean;
   loudnessTargetLufs: number;
+  previewScale?: 1 | 0.5 | 0.25;
 }
 
 export interface SavedLutAsset {
@@ -393,7 +414,17 @@ export interface ChatCutDiffOp {
     | 'set_speed'
     | 'add_effect'
     | 'add_marker'
-    | 'set_aspect';
+    | 'set_aspect'
+    | 'apply_template'
+    | 'add_transition'
+    | 'add_sticker'
+    | 'add_music'
+    | 'beat_cut'
+    | 'apply_lut'
+    | 'reframe_face'
+    | 'text_behind_subject'
+    | 'voiceover_tts'
+    | 'remove_fillers';
   description: string;
   targetClipId?: string;
   timeUs?: Microseconds;
@@ -532,6 +563,10 @@ export function createDefaultAudioState(): AudioClipState {
     autoDucking: false,
     duckAmountDb: -14,
     voicePreset: 'none',
+    eqBands: [0, 0, 0, 0, 0],
+    compressorEnabled: false,
+    noiseGateEnabled: false,
+    pitchSemitones: 0,
   };
 }
 

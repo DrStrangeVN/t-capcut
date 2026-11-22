@@ -81,6 +81,8 @@ export const PlayerViewport: React.FC = () => {
   const shuttleBadgeRef = useRef<HTMLSpanElement | null>(null);
   const vuLeftRef = useRef<HTMLDivElement | null>(null);
   const vuRightRef = useRef<HTMLDivElement | null>(null);
+  const lufsRef = useRef<HTMLSpanElement | null>(null);
+  const behindCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const compositorRef = useRef<WebGLCompositor | null>(null);
   const audioGraphRef = useRef<AudioGraphEngine | null>(null);
@@ -115,6 +117,12 @@ export const PlayerViewport: React.FC = () => {
   const commitCurrentProject = useEditorStore((s) => s.commitCurrentProject);
   const updateSelectedClip = useEditorStore((s) => s.updateSelectedClip);
   const toggleColoristMode = useEditorStore((s) => s.toggleColoristMode);
+  const setPreviewScale = useEditorStore((s) => s.setPreviewScale);
+  const objectSegmentMode = useEditorStore((s) => s.objectSegmentMode);
+  const fullscreenPreview = useEditorStore((s) => s.fullscreenPreview);
+  const setFullscreenPreview = useEditorStore((s) => s.setFullscreenPreview);
+  const setObjectSegmentMode = useEditorStore((s) => s.setObjectSegmentMode);
+  const runAiTask = useEditorStore((s) => s.runAiTask);
   const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
 
   const [snapAxes, setSnapAxes] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
@@ -303,11 +311,30 @@ export const PlayerViewport: React.FC = () => {
         shuttleBadgeRef.current.textContent = playing && shuttle !== 1 ? `${shuttle}x` : '';
       }
 
-      // Render 2D Overlays (25 Text/Karaoke/Lower-Third templates + 24 Stickers & Particle Systems) in lockstep
+      // Render 2D Overlays + Behind-Subject Text Depth Sandwich
       const ovCanvas = overlayCanvasRef.current;
+      const w = project.settings.width;
+      const h = project.settings.height;
+      const hasBehindTexts = flatClips.some(
+        (c) => c.kind === 'text' && c.text?.behindSubject && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs
+      );
+      if (hasBehindTexts) {
+        if (!behindCanvasRef.current) behindCanvasRef.current = document.createElement('canvas');
+        const bc = behindCanvasRef.current;
+        if (bc.width !== w || bc.height !== h) {
+          bc.width = w;
+          bc.height = h;
+        }
+        const bCtx = bc.getContext('2d');
+        if (bCtx) {
+          renderAllOverlays2D(bCtx, flatClips, curUs, w, h, {
+            selectedClipId: useEditorStore.getState().selectedClipId,
+            burnSubtitles: true,
+            layerFilter: 'behind',
+          });
+        }
+      }
       if (ovCanvas) {
-        const w = project.settings.width;
-        const h = project.settings.height;
         if (ovCanvas.width !== w || ovCanvas.height !== h) {
           ovCanvas.width = w;
           ovCanvas.height = h;
@@ -317,6 +344,7 @@ export const PlayerViewport: React.FC = () => {
           renderAllOverlays2D(ovCtx, flatClips, curUs, w, h, {
             selectedClipId: useEditorStore.getState().selectedClipId,
             burnSubtitles: true,
+            layerFilter: 'front',
           });
         }
       }
@@ -377,13 +405,36 @@ export const PlayerViewport: React.FC = () => {
       // Dirty-frame check: skip GPU pass if paused and project+playhead+media unchanged
       const comp = compositorRef.current;
       const cmp = compareStateRef.current;
-      const renderKey = `${project.updatedAt}:${curUs}:${nestedScopeId ?? ''}:${cmp.active ? cmp.splitX.toFixed(3) : 'off'}:${JSON.stringify(project.clips).length}`;
+      const hp = useEditorStore.getState().hoverPreview;
+      const pScale = project.settings.previewScale ?? 1;
+      const renderKey = `${project.updatedAt}:${curUs}:${nestedScopeId ?? ''}:${cmp.active ? cmp.splitX.toFixed(3) : 'off'}:${pScale}:${hp ? `${hp.kind}_${hp.id}` : 'none'}:${Object.keys(project.clips).length}`;
       if (comp && (playing || renderKey !== lastRenderKey || activeClips.some((c) => c.kind === 'video'))) {
         lastRenderKey = renderKey;
         const tStart = performance.now();
-        const glow = comp.renderFrame(project, curUs, mediaElementsRef.current, maskElementsRef.current, {
+        let renderProj = project;
+        if (hp) {
+          const tempClips: typeof project.clips = {};
+          for (const [k, c] of Object.entries(project.clips)) {
+            if ((c.kind === 'video' || c.kind === 'image') && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs) {
+              if (hp.kind === 'lut') {
+                tempClips[k] = { ...c, colorGrade: { ...c.colorGrade, lutId: hp.id, lutIntensity: 0.85 } };
+              } else {
+                tempClips[k] = {
+                  ...c,
+                  effects: [...c.effects, { id: `hp_${hp.id}`, name: hp.name, shaderId: hp.id, intensity: 0.72, speed: 1, scale: 1, enabled: true }],
+                };
+              }
+            } else {
+              tempClips[k] = c;
+            }
+          }
+          renderProj = { ...project, clips: tempClips };
+        }
+        const glow = comp.renderFrame(renderProj, curUs, mediaElementsRef.current, maskElementsRef.current, {
           nestedScopeId,
           compareSplitX: cmp.active ? cmp.splitX : null,
+          previewScale: pScale,
+          behindOverlayCanvas: hasBehindTexts ? behindCanvasRef.current : null,
         });
         const costMs = Math.round((performance.now() - tStart) * 10) / 10;
         if (renderMsRef.current && now - lastMsTextUpdate > 140) {
@@ -395,11 +446,14 @@ export const PlayerViewport: React.FC = () => {
         }
       }
 
-      // Live Stereo VU Meter DOM update
+      // Live Stereo VU Meter + LUFS DOM update
       if (audioGraphRef.current && vuLeftRef.current && vuRightRef.current) {
-        const lv = playing ? audioGraphRef.current.getStereoLevels() : { leftNorm: 0, rightNorm: 0 };
+        const lv = playing ? audioGraphRef.current.getStereoLevels() : { leftNorm: 0, rightNorm: 0, lufs: -60 };
         vuLeftRef.current.style.width = `${Math.round(lv.leftNorm * 100)}%`;
         vuRightRef.current.style.width = `${Math.round(lv.rightNorm * 100)}%`;
+        if (lufsRef.current) {
+          lufsRef.current.textContent = playing && lv.lufs > -55 ? `${lv.lufs} LUFS` : '-- LUFS';
+        }
       }
 
       rafId = requestAnimationFrame(tick);
@@ -423,6 +477,20 @@ export const PlayerViewport: React.FC = () => {
   const handleStagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!project) return;
     const curUs = playbackClock.getTimeUs();
+
+    if (objectSegmentMode && stageRef.current) {
+      const rect = stageRef.current.getBoundingClientRect();
+      const nx = (e.clientX - rect.left) / Math.max(1, rect.width);
+      const ny = (e.clientY - rect.top) / Math.max(1, rect.height);
+      const activeVisual = Object.values(project.clips).find(
+        (c) => !c.disabled && c.assetId && (c.kind === 'video' || c.kind === 'image') && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs
+      );
+      if (activeVisual?.assetId) {
+        setObjectSegmentMode(false);
+        void runAiTask(activeVisual.assetId, 'object-matting', { normX: nx, normY: ny });
+        return;
+      }
+    }
 
     if (eyedropperActive && selectedClip && compositorRef.current && stageRef.current) {
       const rect = stageRef.current.getBoundingClientRect();
@@ -687,6 +755,26 @@ export const PlayerViewport: React.FC = () => {
           >
             <Eye size={12} /> {project?.settings.coloristMode ? 'Colorist On' : 'Colorist'}
           </button>
+          <button
+            className="glass-btn mono"
+            style={{ padding: '4px 7px', fontSize: 10.5, whiteSpace: 'nowrap' }}
+            onClick={() => {
+              const cur = project?.settings.previewScale ?? 1;
+              const nextScale = cur === 1 ? 0.5 : cur === 0.5 ? 0.25 : 1;
+              void setPreviewScale(nextScale);
+            }}
+            title="Playback Resolution Scaling (Full / 1/2 / 1/4 tiết kiệm GPU khi dựng 4K)"
+          >
+            {(project?.settings.previewScale ?? 1) === 1 ? 'Full' : project?.settings.previewScale === 0.5 ? '1/2' : '1/4'}
+          </button>
+          <button
+            className={`glass-btn ${fullscreenPreview ? 'glass-btn-active' : ''}`}
+            style={{ padding: '4px 7px', fontSize: 11 }}
+            onClick={() => setFullscreenPreview(!fullscreenPreview)}
+            title="Toàn màn hình Preview (Cmd+Shift+F)"
+          >
+            <Maximize size={12} />
+          </button>
         </div>
       </div>
 
@@ -721,7 +809,7 @@ export const PlayerViewport: React.FC = () => {
             border: eyedropperActive ? '2px solid #34d399' : '1px solid rgba(255,255,255,0.18)',
             boxShadow: '0 20px 50px rgba(0,0,0,0.65)',
             background: '#05070b',
-            cursor: eyedropperActive ? 'crosshair' : 'grab',
+            cursor: eyedropperActive || objectSegmentMode ? 'crosshair' : 'grab',
           }}
         >
           <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
@@ -971,6 +1059,9 @@ export const PlayerViewport: React.FC = () => {
               />
             </div>
           </div>
+          <span ref={lufsRef} className="mono" style={{ fontSize: 9.5, color: 'var(--text-secondary)', minWidth: 46 }}>
+            -- LUFS
+          </span>
 
           <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.14)' }} />
 

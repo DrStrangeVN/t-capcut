@@ -14,12 +14,16 @@ import {
   createEmptyProject,
   createJsonPatch,
   evaluateCubicBezier,
+  buildTemplatePackageFromProject,
   exportSubtitlesToASS,
   exportSubtitlesToSRT,
   exportToCapCutDraft,
   exportToFCPXML,
   exportToOTIO,
   importFromCapCutDraft,
+  importFromCapCutDraftDetailed,
+  importFromFCPXML,
+  importFromOTIO,
   interpolateKeyframes,
   mapLocalTimelineToSourceUs,
   parseCubeLUT,
@@ -156,6 +160,37 @@ describe('@t-capcut/schema', () => {
 
     const ass = exportSubtitlesToASS([tClip]);
     assert.ok(ass.includes('\\kf40'));
+
+    const fcpxmlImported = importFromFCPXML(fcpxml, 'p_fcpx');
+    assert.ok(Object.keys(fcpxmlImported.clips).length >= 2);
+
+    const otioImported = importFromOTIO(exportToOTIO(project), 'p_otio');
+    assert.ok(Object.keys(otioImported.clips).length >= 2);
+
+    const detailed = importFromCapCutDraftDetailed(
+      {
+        ...ccDraft,
+        materials: {
+          ...ccDraft.materials,
+          transitions: [{ id: 'tr1', name: 'Flash White Cut', duration: 350_000 }],
+          video_effects: [{ id: 'vfx1', name: 'Kodak Halation Glow' }],
+        },
+        tracks: ccDraft.tracks.map((tr) => ({
+          ...tr,
+          segments: tr.segments.map((sg) => ({ ...sg, extra_material_refs: ['tr1', 'vfx1'] })),
+        })),
+      },
+      'p_cc2',
+      () => false
+    );
+    assert.ok(detailed.report.compatibilityPct >= 80);
+    assert.equal(detailed.report.missingMediaSlots.length, 1);
+    assert.ok(Object.values(detailed.project.clips).some((c) => c.transitionIn?.type === 'flash_white'));
+    assert.ok(Object.values(detailed.project.clips).some((c) => c.effects.some((e) => e.shaderId === 'halation')));
+
+    const tplPkg = buildTemplatePackageFromProject(project, 'My Custom Template');
+    assert.equal(tplPkg.format, 'tcapcut-template-v1');
+    assert.equal(tplPkg.slots.length, 1);
   });
 
   it('parses a 3D .cube LUT file', () => {

@@ -53,10 +53,10 @@ const TABS: Array<{ id: LeftPanelTab; label: string; icon: React.ReactNode }> = 
   { id: 'audio', label: 'Audio', icon: <Music size={13} /> },
   { id: 'text', label: 'Text', icon: <Subtitles size={13} /> },
   { id: 'stickers', label: 'Stickers', icon: <Sticker size={13} /> },
-  { id: 'effects', label: 'VFX 36', icon: <Sparkles size={13} /> },
-  { id: 'transitions', label: 'Trans 24', icon: <Layers size={13} /> },
+  { id: 'effects', label: 'VFX 48', icon: <Sparkles size={13} /> },
+  { id: 'transitions', label: 'Trans 32', icon: <Layers size={13} /> },
   { id: 'luts', label: 'LUTs 16', icon: <Palette size={13} /> },
-  { id: 'templates', label: 'Mẫu 12', icon: <LayoutTemplate size={13} /> },
+  { id: 'templates', label: 'Mẫu 12+', icon: <LayoutTemplate size={13} /> },
   { id: 'ai', label: 'AI Lab', icon: <Bot size={13} /> },
 ];
 
@@ -77,6 +77,8 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
   const lutInputRef = useRef<HTMLInputElement | null>(null);
   const srtInputRef = useRef<HTMLInputElement | null>(null);
   const packInputRef = useRef<HTMLInputElement | null>(null);
+  const lottieInputRef = useRef<HTMLInputElement | null>(null);
+  const univTplInputRef = useRef<HTMLInputElement | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const leftTab = useEditorStore((s) => s.leftTab);
@@ -84,6 +86,8 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const health = useEditorStore((s) => s.health);
   const favoritePresetIds = useEditorStore((s) => s.favoritePresetIds);
+  const loadedLuts = useEditorStore((s) => s.loadedLuts);
+  const objectSegmentMode = useEditorStore((s) => s.objectSegmentMode);
 
   const setLeftTab = useEditorStore((s) => s.setLeftTab);
   const createDemoSample = useEditorStore((s) => s.createDemoSample);
@@ -112,11 +116,23 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
   const commitProject = useEditorStore((s) => s.commitProject);
   const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
   const setErrorMessage = useEditorStore((s) => s.setErrorMessage);
+  const setHoverPreview = useEditorStore((s) => s.setHoverPreview);
+  const setObjectSegmentMode = useEditorStore((s) => s.setObjectSegmentMode);
+  const smartRemixSelectedMusic = useEditorStore((s) => s.smartRemixSelectedMusic);
+  const autoSyncSfxAtCuts = useEditorStore((s) => s.autoSyncSfxAtCuts);
+  const addLottieJsonSticker = useEditorStore((s) => s.addLottieJsonSticker);
+  const generateAiVoiceover = useEditorStore((s) => s.generateAiVoiceover);
+  const importUniversalTemplateFile = useEditorStore((s) => s.importUniversalTemplateFile);
+  const importLocalCapCutDraft = useEditorStore((s) => s.importLocalCapCutDraft);
+  const exportCurrentAsTemplatePack = useEditorStore((s) => s.exportCurrentAsTemplatePack);
 
   const [localPathInput, setLocalPathInput] = useState('');
   const [selectedAssetId, setSelectedAssetId] = useState<string>('');
   const [customGlsl, setCustomGlsl] = useState(DEFAULT_CUSTOM_GLSL);
   const [showShaderEditor, setShowShaderEditor] = useState(false);
+  const [ttsText, setTtsText] = useState('');
+  const [ttsLang, setTtsLang] = useState<'vi' | 'en'>('vi');
+  const [localCapCutDrafts, setLocalCapCutDrafts] = useState<Array<{ name: string; draftPath: string; modifiedAt: number }>>([]);
 
   // Creative search + category filters + preview state
   const [searchQuery, setSearchQuery] = useState('');
@@ -478,6 +494,9 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
                 🔊 Bộ SFX (40)
               </button>
             </div>
+            <button className="glass-btn" style={{ fontSize: 11 }} onClick={() => void smartRemixSelectedMusic()}>
+              <Sparkles size={12} color="#34d399" /> Smart Music Remix (Tự khớp Video + Outro)
+            </button>
 
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {(audioSubTab === 'music' ? AUDIO_MUSIC_CATEGORIES : AUDIO_SFX_CATEGORIES).map((c) => (
@@ -630,9 +649,29 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
           </>
         )}
 
-        {/* ======================== STICKERS & GPU PARTICLES TAB (24 PRESETS) ======================== */}
+        {/* ======================== STICKERS, LOTTIE & GPU PARTICLES TAB (30 PRESETS) ======================== */}
         {leftTab === 'stickers' && (
           <>
+            <button className="glass-btn glass-btn-primary" style={{ fontSize: 11 }} onClick={() => lottieInputRef.current?.click()}>
+              <Upload size={12} /> Nhập Lottie Motion (.json / .lottie)
+            </button>
+            <input
+              ref={lottieInputRef}
+              type="file"
+              accept=".json,.lottie"
+              style={{ display: 'none' }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (file.name.endsWith('.lottie')) {
+                  await importUniversalTemplateFile(file);
+                } else {
+                  const txt = await file.text();
+                  await addLottieJsonSticker(file.name.replace(/\.json$/i, ''), txt);
+                }
+                e.target.value = '';
+              }}
+            />
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {STICKER_CATEGORIES.map((c) => (
                 <button key={c.id} style={catPillStyle(stickerCat === c.id)} onClick={() => setStickerCat(c.id)}>
@@ -701,8 +740,14 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
                     onDragStart={(e) => {
                       e.dataTransfer.setData('application/x-tcapcut-preset', JSON.stringify({ kind: 'vfx', preset: fx }));
                     }}
-                    onMouseEnter={() => setHoveredVfxId(fx.id)}
-                    onMouseLeave={() => setHoveredVfxId(null)}
+                    onMouseEnter={() => {
+                      setHoveredVfxId(fx.id);
+                      setHoverPreview({ kind: 'vfx', id: fx.id, name: fx.name });
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredVfxId(null);
+                      setHoverPreview(null);
+                    }}
                     style={{
                       borderRadius: 12,
                       overflow: 'hidden',
@@ -763,6 +808,9 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
               <input type="checkbox" checked={transWithSfx} onChange={(e) => setTransWithSfx(e.target.checked)} />
               <span>🔊 Tự chèn SFX Whoosh/Glitch đi kèm chuyển cảnh</span>
             </label>
+            <button className="glass-btn" style={{ fontSize: 11 }} onClick={() => void autoSyncSfxAtCuts()}>
+              <Sparkles size={12} color="#fbbf24" /> Auto-SFX Khớp Toàn Bộ Vết Cắt
+            </button>
 
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {TRANSITION_CATEGORIES.map((c) => (
@@ -881,6 +929,17 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
                   <div
                     key={lut.id}
                     onClick={() => void applyBuiltinLut(lut)}
+                    onMouseEnter={() => {
+                      if (!loadedLuts[lut.id]) {
+                        void engineApi.getBuiltinLut(lut.id).then((d) => {
+                          registerLut({ id: d.id, title: d.title, size: d.size, data: new Float32Array(d.data) });
+                          setHoverPreview({ kind: 'lut', id: lut.id, name: lut.title });
+                        }).catch(() => {});
+                      } else {
+                        setHoverPreview({ kind: 'lut', id: lut.id, name: lut.title });
+                      }
+                    }}
+                    onMouseLeave={() => setHoverPreview(null)}
                     style={{
                       borderRadius: 12,
                       overflow: 'hidden',
@@ -917,9 +976,53 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
           </>
         )}
 
-        {/* ======================== 12 SMART VIDEO TEMPLATES TAB ======================== */}
+        {/* ======================== 12 SMART VIDEO TEMPLATES + UNIVERSAL TEMPLATE HUB ======================== */}
         {leftTab === 'templates' && (
           <>
+            <div style={{ padding: 8, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: '#67e8f9' }}>Universal Template Hub (Đa Nền Tảng)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
+                <button className="glass-btn" style={{ fontSize: 10.5 }} onClick={() => univTplInputRef.current?.click()} title="Nhập .capcut, draft_content.json, .fcpxml, .otio, .tcapcut-tpl">
+                  <Upload size={11} /> Nhập Mẫu Ngoài
+                </button>
+                <button className="glass-btn" style={{ fontSize: 10.5 }} onClick={() => void exportCurrentAsTemplatePack()} title="Đóng gói dự án hiện tại thành gói .tcapcut-tpl">
+                  <Download size={11} color="#34d399" /> Lưu Thành Mẫu
+                </button>
+              </div>
+              <button
+                className="glass-btn"
+                style={{ fontSize: 10.5 }}
+                onClick={async () => {
+                  const res = await engineApi.scanLocalCapCutDrafts();
+                  setLocalCapCutDrafts(res.drafts);
+                  if (res.drafts.length === 0) setStatusMessage('Không thấy thư mục dự án CapCut cục bộ trên máy này.');
+                }}
+              >
+                <FileJson size={11} color="#a78bfa" /> Quét Dự Án CapCut Có Sẵn Trên Mac
+              </button>
+              {localCapCutDrafts.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 110, overflowY: 'auto' }}>
+                  {localCapCutDrafts.slice(0, 6).map((d) => (
+                    <button key={d.draftPath} className="glass-btn" style={{ fontSize: 10, justifyContent: 'space-between' }} onClick={() => void importLocalCapCutDraft(d.draftPath)}>
+                      <span>📂 {d.name}</span>
+                      <span style={{ color: '#22d3ee' }}>Mở →</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input
+                ref={univTplInputRef}
+                type="file"
+                accept=".capcut,.tcapcut-tpl,.json,.fcpxml,.xml,.otio,.zip,.lottie"
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (f) await importUniversalTemplateFile(f);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {TEMPLATE_CATEGORIES.map((c) => (
                 <button key={c.id} style={catPillStyle(tplCat === c.id)} onClick={() => setTplCat(c.id)}>
@@ -1003,8 +1106,20 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
                 <button className="glass-btn" onClick={() => void runAiTask(activeAsset.id, 'matting')}>
                   <UserCheck size={13} color="#22d3ee" /> Apple Vision Person Matting (Tách Nền)
                 </button>
+                <button
+                  className={`glass-btn ${objectSegmentMode ? 'glass-btn-active' : ''}`}
+                  onClick={() => {
+                    setObjectSegmentMode(!objectSegmentMode);
+                    if (!objectSegmentMode) setStatusMessage('Bấm trực tiếp vào vật thể trên Video Player để tách nền!');
+                  }}
+                >
+                  <Sparkles size={13} color="#38bdf8" /> {objectSegmentMode ? 'Đang chờ Click lên Vật Thể...' : 'Click-to-Segment Vật Thể (SAM / Vision)'}
+                </button>
                 <button className="glass-btn" onClick={() => void runAiTask(activeAsset.id, 'face-track')}>
                   <Wand2 size={13} color="#a78bfa" /> Auto-Reframe 9:16 (Bám Khuôn Mặt)
+                </button>
+                <button className="glass-btn" onClick={() => void runAiTask(activeAsset.id, 'highlights')}>
+                  <Sparkles size={13} color="#fb7185" /> AI Auto-Highlight Viral 9:16
                 </button>
                 <button className="glass-btn" onClick={() => void runAiTask(activeAsset.id, 'beats')}>
                   <AudioWaveform size={13} color="#fbbf24" /> Auto Beat Markers (Nhịp Nhạc)
@@ -1012,12 +1127,52 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
                 <button className="glass-btn" onClick={() => void runAiTask(activeAsset.id, 'scenes')}>
                   <Scissors size={13} color="#34d399" /> Scene Edit Detection (Dò Cảnh)
                 </button>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
+                  <button className="glass-btn" style={{ fontSize: 10.5 }} onClick={() => void runAiTask(activeAsset.id, 'stabilize')}>
+                    Chống rung 2D
+                  </button>
+                  <button className="glass-btn" style={{ fontSize: 10.5 }} onClick={() => void runAiTask(activeAsset.id, 'upscale')}>
+                    Upscale 2× Crisp
+                  </button>
+                </div>
+                <button className="glass-btn" onClick={() => void runAiTask(activeAsset.id, 'stem-separate')}>
+                  <Music size={13} color="#34d399" /> Tách Vocals & Nhạc Nền (AI Stems)
+                </button>
                 <button className="glass-btn" disabled={!selectedClip} onClick={() => selectedClip && void removeSilencesFromClip(selectedClip.id)}>
                   <Scissors size={13} color="#fb7185" /> 1-Click Cắt Khoảng Lặng Clip Đang Chọn
+                </button>
+                <button className="glass-btn" onClick={() => void runAiTask(activeAsset.id, 'remove-fillers')}>
+                  <Scissors size={13} color="#f59e0b" /> Xóa Từ Thừa ("ờ, à, ừm")
                 </button>
                 <button className="glass-btn glass-btn-primary" onClick={() => void runAiTask(activeAsset.id, 'transcribe')}>
                   <Subtitles size={13} /> Tạo Transcript Rough-Cut
                 </button>
+
+                {/* Offline AI Voiceover TTS Generator */}
+                <div style={{ padding: 9, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa' }}>AI Voiceover Offline (Giọng đọc + Tự tạo Phụ đề)</div>
+                  <textarea
+                    className="glass-textarea"
+                    rows={2}
+                    placeholder="Nhập lời thoại cần AI đọc..."
+                    value={ttsText}
+                    onChange={(e) => setTtsText(e.target.value)}
+                  />
+                  <div style={{ display: 'flex', gap: 5 }}>
+                    <select className="glass-select" style={{ width: 115, fontSize: 10.5 }} value={ttsLang} onChange={(e) => setTtsLang(e.target.value as 'vi' | 'en')}>
+                      <option value="vi">Tiếng Việt (Linh)</option>
+                      <option value="en">English (US)</option>
+                    </select>
+                    <button
+                      className="glass-btn glass-btn-primary"
+                      style={{ flex: 1, fontSize: 10.5 }}
+                      disabled={!ttsText.trim()}
+                      onClick={() => void generateAiVoiceover(ttsText, ttsLang)}
+                    >
+                      Tạo Voiceover + Phụ đề
+                    </button>
+                  </div>
+                </div>
 
                 {activeAsset.transcript && activeAsset.transcript.length > 0 && (
                   <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>

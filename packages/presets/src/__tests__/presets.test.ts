@@ -21,12 +21,12 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS_DIR = path.resolve(__dirname, '../../assets');
 
-test('all creative catalog counts & unique IDs match v3.0.0 specification', () => {
-  assert.equal(VFX_CATALOG.length, 36);
-  assert.equal(TRANSITIONS_CATALOG.length, 24);
+test('all creative catalog counts & unique IDs match v4.0.0 specification', () => {
+  assert.equal(VFX_CATALOG.length, 48);
+  assert.equal(TRANSITIONS_CATALOG.length, 32);
   assert.equal(LUTS_CATALOG.length, 16);
   assert.equal(TEXT_CATALOG.length, 25);
-  assert.equal(STICKERS_CATALOG.length, 24);
+  assert.equal(STICKERS_CATALOG.length, 30);
   assert.equal(AUDIO_MUSIC_CATALOG.length, 15);
   assert.equal(AUDIO_SFX_CATALOG.length, 40);
   assert.equal(VIDEO_TEMPLATES_CATALOG.length, 12);
@@ -42,18 +42,25 @@ test('all creative catalog counts & unique IDs match v3.0.0 specification', () =
 
   assert.deepEqual(
     VFX_CATALOG.map((v) => v.shaderIndex),
-    Array.from({ length: 36 }, (_, i) => i + 1)
+    Array.from({ length: 48 }, (_, i) => i + 1)
   );
   assert.deepEqual(
     TRANSITIONS_CATALOG.map((t) => t.transIndex),
-    Array.from({ length: 24 }, (_, i) => i + 1)
+    Array.from({ length: 32 }, (_, i) => i + 1)
   );
+  const lottieStickers = STICKERS_CATALOG.filter((s) => s.category === 'lottie');
+  assert.equal(lottieStickers.length, 6);
+  for (const ls of lottieStickers) {
+    assert.ok(ls.lottieJson && JSON.parse(ls.lottieJson).layers.length > 0);
+  }
 });
 
 test('music tracks have valid BPM-aligned beat grids & text presets produce valid TextStyleState', () => {
   for (const track of AUDIO_MUSIC_CATALOG) {
     assert.ok(track.bpm >= 70 && track.bpm <= 140, `Expected valid BPM for ${track.id}`);
-    assert.ok(track.beatsUs.length >= 15, `Expected beat markers for ${track.id}`);
+    assert.ok(track.durationSec >= 40, `Expected studio length >=40s for ${track.id}`);
+    assert.ok(track.beatsUs.length >= 45, `Expected full beat markers for ${track.id}`);
+    assert.ok(track.structure && track.structure.outroStartUs > track.structure.dropUs);
   }
   const style = buildTextStyleFromPreset(TEXT_CATALOG[0]!);
   assert.ok(style.fontSize > 20);

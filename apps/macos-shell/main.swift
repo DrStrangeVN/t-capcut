@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKScript
             backing: .buffered,
             defer: false
         )
-        window.title = "T-CapCut v2.0"
+        window.title = "T-CapCut"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isOpaque = false

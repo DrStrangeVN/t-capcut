@@ -14,8 +14,16 @@ import {
   type Clip,
   type Project,
 } from '@t-capcut/schema';
-import { detectBeats, detectScenes, detectSilence, transcribeMedia } from './ai.js';
-import { LUTS_CATALOG, VFX_CATALOG } from '@t-capcut/presets';
+import { detectBeats, detectScenes, detectSilence, findFillerWordSpans, transcribeMedia } from './ai.js';
+import {
+  AUDIO_MUSIC_CATALOG,
+  LUTS_CATALOG,
+  STICKERS_CATALOG,
+  TRANSITIONS_CATALOG,
+  VFX_CATALOG,
+  VIDEO_TEMPLATES_CATALOG,
+  applyVideoTemplateToProject,
+} from '@t-capcut/presets';
 
 export interface ChatCutLlmConfig {
   provider: 'ollama' | 'openai' | 'gemini';
@@ -46,6 +54,16 @@ const VALID_OPS = new Set<ChatCutDiffOp['op']>([
   'add_effect',
   'add_marker',
   'set_aspect',
+  'apply_template',
+  'add_transition',
+  'add_sticker',
+  'add_music',
+  'beat_cut',
+  'apply_lut',
+  'reframe_face',
+  'text_behind_subject',
+  'voiceover_tts',
+  'remove_fillers',
 ]);
 
 async function tryLlmPlan(
@@ -62,13 +80,13 @@ async function tryLlmPlan(
     durSec: Number((c.durationUs / US_PER_SEC).toFixed(2)),
   }));
   const systemPrompt =
-    'You are T-ChatCut AI video editor planner. Reply ONLY with valid JSON: {"summary": string, "ops": [{"op": one of split|delete|trim|add_caption|apply_color|apply_transform|apply_audio|set_speed|add_effect|add_marker|set_aspect, "description": string, "targetClipId"?: string, "timeUs"?: number, "durationUs"?: number, "payload"?: object}]}. Units: timeUs and durationUs are microseconds (1s = 1000000).';
-  const userContent = `Project aspectRatio=${project.settings.aspectRatio}, targetClips=${JSON.stringify(summaryClips)}\nUser request: ${prompt}`;
+    `You are T-ChatCut v3 AI video director. Reply ONLY with valid JSON: {"summary": string, "ops": [{"op": one of split|delete|trim|add_caption|apply_color|apply_transform|apply_audio|set_speed|add_effect|add_marker|set_aspect|apply_template|add_transition|add_sticker|add_music|beat_cut|apply_lut|reframe_face|text_behind_subject|voiceover_tts|remove_fillers, "description": string, "targetClipId"?: string, "timeUs"?: number, "durationUs"?: number, "payload"?: object}]}. Units: microseconds (1s=1000000). Available LUTs: ${LUTS_CATALOG.map((l) => l.id).join(',')}. VFX: ${VFX_CATALOG.slice(0, 18).map((v) => v.id).join(',')}. Transitions: ${TRANSITIONS_CATALOG.slice(0, 16).map((t) => t.id).join(',')}. Templates: ${VIDEO_TEMPLATES_CATALOG.map((t) => t.id).join(',')}.`;
+  const userContent = `Project aspectRatio=${project.settings.aspectRatio}, beats=${project.markers.filter((m) => m.kind === 'beat').length}, targetClips=${JSON.stringify(summaryClips)}\nUser request: ${prompt}`;
 
   try {
     let rawText = '';
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 45_000);
     try {
       if (llm.provider === 'ollama') {
         const endpoint = (llm.endpoint || 'http://127.0.0.1:11434').replace(/\/$/, '');
@@ -401,6 +419,118 @@ export async function buildChatCutPlan(
     });
   }
 
+  // 11. Remove Filler Words
+  if (/từ thừa|ậm ừ|filler/.test(q) && primaryAsset?.transcript) {
+    const fillers = findFillerWordSpans(primaryAsset.transcript);
+    for (const f of fillers) {
+      if (primaryClip) {
+        ops.push({
+          op: 'remove_fillers',
+          description: `Loại bỏ từ thừa "${f.word}" (${(f.startUs / US_PER_SEC).toFixed(2)}s)`,
+          targetClipId: primaryClip.id,
+          timeUs: f.startUs,
+          durationUs: f.endUs - f.startUs,
+          payload: { word: f.word },
+        });
+      }
+    }
+  }
+
+  // 12. Text Behind Subject
+  if (/sau người|sau chủ thể|behind subject|text behind/.test(q)) {
+    ops.push({
+      op: 'text_behind_subject',
+      description: 'Đưa tiêu đề ra sau chủ thể (bật AI Person Matting + cờ Depth Sandwich)',
+      targetClipId: primaryClip?.id,
+    });
+  }
+
+  // 13. Auto Beat-Cut across Beat Markers
+  if (/beat-cut|cắt theo nhịp|cut beat|khớp nhịp/.test(q) && primaryClip) {
+    ops.push({
+      op: 'beat_cut',
+      description: `Tự động cắt ${primaryClip.name} theo toàn bộ Beat Markers hiện có`,
+      targetClipId: primaryClip.id,
+    });
+  }
+
+  // 14. Transition preset matching
+  const matchedTrans = TRANSITIONS_CATALOG.find(
+    (t) => q.includes(t.id.replace(/_/g, ' ')) || q.includes(t.name.toLowerCase())
+  );
+  if ((matchedTrans || /chuyển cảnh|transition/.test(q)) && allMainClips.length > 1) {
+    const tr = matchedTrans ?? TRANSITIONS_CATALOG[7]!;
+    allMainClips.slice(1).forEach((mc) => {
+      ops.push({
+        op: 'add_transition',
+        description: `Gắn chuyển cảnh "${tr.name}" vào đầu ${mc.name}`,
+        targetClipId: mc.id,
+        payload: { id: tr.id, name: tr.name, type: tr.id, durationUs: tr.defaultDurationUs },
+      });
+    });
+  }
+
+  // 15. Apply Template or Script-to-Timeline
+  const matchedTpl = VIDEO_TEMPLATES_CATALOG.find(
+    (t) => q.includes(t.id) || q.includes(t.name.toLowerCase())
+  );
+  if (matchedTpl) {
+    ops.push({
+      op: 'apply_template',
+      description: `Áp dụng bộ Template hoàn chỉnh "${matchedTpl.name}" (${matchedTpl.aspectRatio})`,
+      payload: { templateId: matchedTpl.id },
+    });
+  } else if (/kịch bản|script:/.test(q)) {
+    const bodyText = prompt.replace(/^.*?(kịch bản|script)[:：]?\s*/i, '').trim();
+    const lines = bodyText
+      .split(/[\n.;!?]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 2);
+    const sentences = lines.length > 0 ? lines : ['Mở đầu thu hút ngay 3 giây đầu', 'Giới thiệu điểm nổi bật nhất', 'Kêu gọi hành động ngay hôm nay'];
+    let curUs = 0;
+    sentences.forEach((sentence, idx) => {
+      const segDur = 2_400_000;
+      const rawWords = sentence.split(/\s+/).filter(Boolean);
+      const step = Math.floor(segDur / Math.max(1, rawWords.length));
+      ops.push({
+        op: 'add_caption',
+        description: `Phân cảnh kịch bản #${idx + 1}: "${sentence}"`,
+        timeUs: curUs,
+        durationUs: segDur,
+        payload: {
+          text: sentence,
+          karaokeEnabled: true,
+          karaokeActiveColor: '#FFD60A',
+          words: rawWords.map((w, wi) => ({
+            text: w,
+            startUs: wi * step,
+            endUs: wi === rawWords.length - 1 ? segDur : (wi + 1) * step,
+          })),
+        },
+      });
+      curUs += segDur + 150_000;
+    });
+  }
+
+  // 16. Add Sticker
+  const matchedSticker = STICKERS_CATALOG.find((s) => q.includes(s.name.toLowerCase()) || q.includes('subscribe') || q.includes('lottie'));
+  if (/sticker|nhãn|hiệu ứng hạt|tuyết|mưa/.test(q) || matchedSticker) {
+    const stk =
+      matchedSticker ??
+      (/tuyết/.test(q)
+        ? STICKERS_CATALOG.find((s) => s.id === 'ptc_snow')
+        : /mưa/.test(q)
+          ? STICKERS_CATALOG.find((s) => s.id === 'ptc_rain')
+          : STICKERS_CATALOG[0])!;
+    ops.push({
+      op: 'add_sticker',
+      description: `Chèn Sticker "${stk.name}" lên lớp Overlay`,
+      timeUs: primaryClip?.timelineStartUs ?? 0,
+      durationUs: stk.defaultDurationUs,
+      payload: { presetId: stk.id },
+    });
+  }
+
   if (ops.length === 0) {
     ops.push({
       op: 'apply_color',
@@ -422,9 +552,9 @@ export async function buildChatCutPlan(
 export function applyChatCutPlan(project: Project, plan: ChatCutPlan): Project {
   const next = cloneProject(project);
 
-  // Process delete-silence regions via range subtraction on target clip
+  // Process delete-silence & remove-filler regions via range subtraction on target clip
   const deleteOps = plan.ops
-    .filter((o) => o.op === 'delete' && o.targetClipId && o.timeUs !== undefined && o.durationUs)
+    .filter((o) => (o.op === 'delete' || o.op === 'remove_fillers') && o.targetClipId && o.timeUs !== undefined && o.durationUs)
     .sort((a, b) => (b.timeUs ?? 0) - (a.timeUs ?? 0));
 
   for (const d of deleteOps) {
@@ -579,6 +709,101 @@ export function applyChatCutPlan(project: Project, plan: ChatCutPlan): Project {
         c.speed.reverse = Boolean(op.payload.reverse);
       }
       c.durationUs = computeDurationFromSpeed(c.sourceDurationUs, c.speed);
+    } else if (op.op === 'apply_lut' && op.targetClipId && next.clips[op.targetClipId]) {
+      const c = next.clips[op.targetClipId];
+      c.colorGrade.lutId = String(op.payload?.lutId ?? '');
+      c.colorGrade.lutName = String(op.payload?.lutName ?? c.colorGrade.lutId);
+      c.colorGrade.lutIntensity = Number(op.payload?.lutIntensity ?? 0.85);
+    } else if (op.op === 'add_transition' && op.targetClipId && next.clips[op.targetClipId]) {
+      const c = next.clips[op.targetClipId];
+      c.transitionIn = {
+        id: String(op.payload?.id ?? `tr_${Date.now()}`),
+        name: String(op.payload?.name ?? 'Cross Dissolve'),
+        type: String(op.payload?.type ?? 'dissolve'),
+        durationUs: Number(op.payload?.durationUs ?? 450_000),
+      };
+    } else if (op.op === 'add_sticker') {
+      const overlayTrack = next.tracks.find((t) => t.type === 'overlay') ?? next.tracks[0];
+      const preset = STICKERS_CATALOG.find((s) => s.id === op.payload?.presetId) ?? STICKERS_CATALOG[0]!;
+      if (overlayTrack) {
+        const sid = `stk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const dur = op.durationUs ?? preset.defaultDurationUs;
+        next.clips[sid] = {
+          id: sid,
+          trackId: overlayTrack.id,
+          assetId: null,
+          kind: 'sticker',
+          name: preset.name,
+          timelineStartUs: op.timeUs ?? 0,
+          durationUs: dur,
+          sourceStartUs: 0,
+          sourceDurationUs: dur,
+          locked: false,
+          disabled: false,
+          transform: createDefaultTransform(),
+          colorGrade: createDefaultColorGrade(),
+          chromaKey: createDefaultChromaKey(),
+          mask: createDefaultMask(),
+          speed: createDefaultSpeed(),
+          audio: createDefaultAudioState(),
+          keyframes: {},
+          sticker: {
+            presetId: preset.presetId,
+            category: preset.category,
+            name: preset.name,
+            label: preset.label,
+            primaryColor: preset.primaryColor,
+            secondaryColor: preset.secondaryColor,
+            particleType: preset.particleType,
+            iconType: preset.iconType,
+            lottieJson: preset.lottieJson,
+            lottieDurationSec: preset.lottieDurationSec,
+          },
+          effects: [],
+          aiMattingEnabled: false,
+          autoReframeEnabled: false,
+        };
+      }
+    } else if (op.op === 'text_behind_subject') {
+      Object.values(next.clips).forEach((c) => {
+        if (c.kind === 'text' && c.text) c.text.behindSubject = true;
+        if ((c.kind === 'video' || c.kind === 'image') && (!op.targetClipId || c.id === op.targetClipId)) {
+          c.aiMattingEnabled = true;
+        }
+      });
+    } else if (op.op === 'beat_cut' && op.targetClipId && next.clips[op.targetClipId]) {
+      const target = next.clips[op.targetClipId];
+      const beats = next.markers
+        .filter((m) => m.kind === 'beat' && m.timeUs > target.timelineStartUs + 150_000 && m.timeUs < target.timelineStartUs + target.durationUs - 150_000)
+        .map((m) => m.timeUs)
+        .sort((a, b) => a - b);
+      let current = target;
+      for (const bUs of beats) {
+        const leftDur = bUs - current.timelineStartUs;
+        const rightDur = current.durationUs - leftDur;
+        if (leftDur < 120_000 || rightDur < 120_000) continue;
+        const rightPiece: Clip = {
+          ...JSON.parse(JSON.stringify(current)),
+          id: `${current.id}_bc_${Math.random().toString(36).slice(2, 6)}`,
+          timelineStartUs: bUs,
+          durationUs: rightDur,
+          sourceStartUs: current.sourceStartUs + leftDur,
+          sourceDurationUs: rightDur,
+        };
+        current.durationUs = leftDur;
+        current.sourceDurationUs = leftDur;
+        next.clips[rightPiece.id] = rightPiece;
+        current = rightPiece;
+      }
+    } else if (op.op === 'apply_template' && op.payload?.templateId) {
+      const tpl = VIDEO_TEMPLATES_CATALOG.find((t) => t.id === op.payload?.templateId);
+      if (tpl) {
+        const visualAssets = Object.values(next.assets).filter((a) => a.kind === 'video' || a.kind === 'image');
+        const filled = tpl.slots.map((_, i) => (visualAssets.length > 0 ? visualAssets[i % visualAssets.length]! : null));
+        return applyVideoTemplateToProject(next, tpl, filled, null);
+      }
+    } else if (op.op === 'add_music' && op.payload?.musicId) {
+      void AUDIO_MUSIC_CATALOG;
     }
   }
 

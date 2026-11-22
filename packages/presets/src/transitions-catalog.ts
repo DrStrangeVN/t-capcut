@@ -2,7 +2,7 @@ export type TransitionCategory = 'camera' | 'light' | 'geometric' | 'glitch';
 
 export interface TransitionPreset {
   id: string;
-  transIndex: number; // 1..24 in TRANSITION_FRAGMENT_SHADER
+  transIndex: number; // 1..32 in TRANSITION_FRAGMENT_SHADER
   name: string;
   category: TransitionCategory;
   categoryLabel: string;
@@ -12,7 +12,7 @@ export interface TransitionPreset {
 }
 
 export const TRANSITION_CATEGORIES: Array<{ id: TransitionCategory | 'all'; label: string }> = [
-  { id: 'all', label: 'Tất cả (24)' },
+  { id: 'all', label: 'Tất cả (32)' },
   { id: 'camera', label: 'Camera' },
   { id: 'light', label: 'Ánh sáng' },
   { id: 'geometric', label: 'Hình học' },
@@ -51,6 +51,16 @@ export const TRANSITIONS_CATALOG: TransitionPreset[] = [
   { id: 'water_ripple', transIndex: 22, name: 'Water Ripple Wave', category: 'glitch', categoryLabel: 'Glitch & VFX', desc: 'Gợn sóng mặt nước lan từ tâm', defaultDurationUs: 600_000, recommendedSfxId: 'sfx_bubble_pop' },
   { id: 'swirl_blur', transIndex: 23, name: 'Swirl Blur Warp', category: 'glitch', categoryLabel: 'Glitch & VFX', desc: 'Uốn xoáy mượt mà giữa hai khung hình', defaultDurationUs: 520_000, recommendedSfxId: 'sfx_deep_whoosh' },
   { id: 'shake_cut', transIndex: 24, name: 'Impact Shake Cut', category: 'glitch', categoryLabel: 'Glitch & VFX', desc: 'Giật rung mạnh tại điểm chuyển clip', defaultDurationUs: 350_000, recommendedSfxId: 'sfx_punch_hit' },
+
+  // v4.0 3D, Matte & Motion Transitions (25..32)
+  { id: 'cube_turn', transIndex: 25, name: '3D Cube Perspective Spin', category: 'geometric', categoryLabel: 'Hình học', desc: 'Xoay khối lập phương 3D có chiều sâu sang cảnh B', defaultDurationUs: 550_000, recommendedSfxId: 'sfx_deep_whoosh' },
+  { id: 'card_flip', transIndex: 26, name: '3D Card Flip', category: 'geometric', categoryLabel: 'Hình học', desc: 'Lật thẻ 3D ngang giữa hai clip nhanh gọn', defaultDurationUs: 480_000, recommendedSfxId: 'sfx_page_flip' },
+  { id: 'page_peel', transIndex: 27, name: 'Cinema Page Peel', category: 'geometric', categoryLabel: 'Hình học', desc: 'Cuộn góc trang giấy hé lộ khung hình tiếp theo', defaultDurationUs: 600_000, recommendedSfxId: 'sfx_page_flip' },
+  { id: 'luma_fade', transIndex: 28, name: 'Luma Cloud Matte', category: 'light', categoryLabel: 'Ánh sáng', desc: 'Chuyển cảnh mượt từ vùng sáng sang tối', defaultDurationUs: 620_000, recommendedSfxId: 'sfx_air_pass' },
+  { id: 'whip_zoom_blur', transIndex: 29, name: 'Whip Zoom Beat Cut', category: 'camera', categoryLabel: 'Camera', desc: 'Phóng tốc độ kết hợp lia ống kính chuẩn Beat-Sync', defaultDurationUs: 380_000, recommendedSfxId: 'sfx_whip_swish' },
+  { id: 'morph_dissolve', transIndex: 30, name: 'Talking-Head Morph Cut', category: 'camera', categoryLabel: 'Camera', desc: 'Hòa tan mềm kèm bù phơi sáng cho đoạn cắt Talking Head', defaultDurationUs: 320_000 },
+  { id: 'mosaic_tiles', transIndex: 31, name: 'Mosaic Glass Tiles', category: 'geometric', categoryLabel: 'Hình học', desc: 'Chia ô vuông pha lê lật chuyển từng vùng', defaultDurationUs: 540_000, recommendedSfxId: 'sfx_bubble_pop' },
+  { id: 'radial_rgb_flash', transIndex: 32, name: 'Radial RGB Hyper Flash', category: 'glitch', categoryLabel: 'Glitch & VFX', desc: 'Chớp sáng tách kênh màu tỏa tâm cho Music Video', defaultDurationUs: 400_000, recommendedSfxId: 'sfx_bass_drop' },
 ];
 
 export const TRANSITION_BY_ID: Record<string, TransitionPreset> = Object.fromEntries(

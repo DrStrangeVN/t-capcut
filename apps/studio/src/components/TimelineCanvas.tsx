@@ -120,9 +120,15 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
   const addTextPresetClip = useEditorStore((s) => s.addTextPresetClip);
   const setClipTransition = useEditorStore((s) => s.setClipTransition);
   const autoCutSelectedClipToBeats = useEditorStore((s) => s.autoCutSelectedClipToBeats);
+  const copiedAttributes = useEditorStore((s) => s.copiedAttributes);
+  const copyClipAttributes = useEditorStore((s) => s.copyClipAttributes);
+  const pasteClipAttributes = useEditorStore((s) => s.pasteClipAttributes);
+  const detachAudioFromClip = useEditorStore((s) => s.detachAudioFromClip);
+  const rippleDeleteClip = useEditorStore((s) => s.rippleDeleteClip);
 
   const [addTrackMenu, setAddTrackMenu] = useState(false);
   const [quickTransMenu, setQuickTransMenu] = useState<{ clipId: string; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ clipId: string; kind: Clip['kind']; x: number; y: number } | null>(null);
 
   const scope = project ? getScopeTracksAndClips(project, nestedScopeId) : null;
   const tracks = scope ? [...scope.tracks].sort((a, b) => b.index - a.index) : [];
@@ -321,6 +327,22 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
         if (clip.prerenderHash) {
           ctx.fillStyle = '#34d399';
           ctx.fillRect(x + 6, cy + ch - 3, Math.max(0, cw - 12), 2.5);
+        }
+
+        // Studio Audio Volume Rubber-band + Fade ramps line
+        if (clip.kind === 'audio' && cw > 24) {
+          const volFrac = Math.min(1, Math.max(0, clip.audio.volume / 2));
+          const lineY = cy + ch - 4 - volFrac * (ch - 12);
+          const fadeInPx = Math.min(cw * 0.45, (clip.audio.fadeInUs / US_PER_SEC) * zoom);
+          const fadeOutPx = Math.min(cw * 0.45, (clip.audio.fadeOutUs / US_PER_SEC) * zoom);
+          ctx.strokeStyle = 'rgba(110, 231, 183, 0.9)';
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.moveTo(x + 2, fadeInPx > 2 ? cy + ch - 4 : lineY);
+          if (fadeInPx > 2) ctx.lineTo(x + fadeInPx, lineY);
+          ctx.lineTo(x + cw - Math.max(2, fadeOutPx), lineY);
+          if (fadeOutPx > 2) ctx.lineTo(x + cw - 2, cy + ch - 4);
+          ctx.stroke();
         }
       }
 
@@ -1011,6 +1033,19 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onDoubleClick={handleDoubleClick}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              const canvas = canvasRef.current;
+              if (!canvas) return;
+              const rect = canvas.getBoundingClientRect();
+              const cx = e.clientX - rect.left;
+              const cy = e.clientY - rect.top;
+              const hit = hitTestClip(cx, cy);
+              if (hit) {
+                setSelectedClipId(hit.clip.id);
+                setContextMenu({ clipId: hit.clip.id, kind: hit.clip.kind, x: e.clientX, y: e.clientY });
+              }
+            }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleCanvasDrop}
             style={{
@@ -1072,6 +1107,82 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clip Right-Click Pro Context Menu */}
+      {contextMenu && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 92 }} onClick={() => setContextMenu(null)}>
+          <div
+            className="liquid-glass-modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              left: Math.min(window.innerWidth - 230, Math.max(12, contextMenu.x)),
+              top: Math.max(16, contextMenu.y - 220),
+              width: 215,
+              padding: 8,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+            }}
+          >
+            <button
+              className="glass-btn"
+              style={{ fontSize: 11, justifyContent: 'flex-start' }}
+              onClick={() => {
+                copyClipAttributes(contextMenu.clipId);
+                setContextMenu(null);
+              }}
+            >
+              📋 Copy Attributes
+            </button>
+            {copiedAttributes && (
+              <>
+                <button className="glass-btn" style={{ fontSize: 11, justifyContent: 'flex-start' }} onClick={() => { void pasteClipAttributes(contextMenu.clipId, 'color'); setContextMenu(null); }}>
+                  🎨 Dán Màu / 3D LUT
+                </button>
+                <button className="glass-btn" style={{ fontSize: 11, justifyContent: 'flex-start' }} onClick={() => { void pasteClipAttributes(contextMenu.clipId, 'vfx'); setContextMenu(null); }}>
+                  ✨ Dán GPU VFX Stack
+                </button>
+                <button className="glass-btn" style={{ fontSize: 11, justifyContent: 'flex-start' }} onClick={() => { void pasteClipAttributes(contextMenu.clipId, 'all'); setContextMenu(null); }}>
+                  ⚡ Dán Tất Cả Thuộc Tính
+                </button>
+              </>
+            )}
+            <button
+              className="glass-btn"
+              style={{ fontSize: 11, justifyContent: 'flex-start' }}
+              onClick={() => {
+                void duplicateSelectedClip();
+                setContextMenu(null);
+              }}
+            >
+              📑 Nhân Bản Clip
+            </button>
+            {(contextMenu.kind === 'video' || contextMenu.kind === 'compound') && (
+              <button
+                className="glass-btn"
+                style={{ fontSize: 11, justifyContent: 'flex-start' }}
+                onClick={() => {
+                  void detachAudioFromClip(contextMenu.clipId);
+                  setContextMenu(null);
+                }}
+              >
+                🔊 Tách Audio (Detach Audio)
+              </button>
+            )}
+            <button
+              className="glass-btn"
+              style={{ fontSize: 11, justifyContent: 'flex-start', color: '#fb7185' }}
+              onClick={() => {
+                void rippleDeleteClip(contextMenu.clipId);
+                setContextMenu(null);
+              }}
+            >
+              ✂ Ripple Delete (Xóa & Kéo Khít)
+            </button>
           </div>
         </div>
       )}

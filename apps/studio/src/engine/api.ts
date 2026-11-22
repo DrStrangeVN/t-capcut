@@ -194,6 +194,45 @@ export const engineApi = {
       method: 'POST',
       body: JSON.stringify({ path: filePath }),
     }),
+  getSystemFonts: () => reqJson<{ fonts: string[] }>('/api/system/fonts'),
+  generateTtsVoiceover: (text: string, language: 'vi' | 'en' = 'vi', voice?: string) =>
+    reqJson<{ asset: MediaAsset; segment: TranscriptSegment }>('/api/ai/tts', {
+      method: 'POST',
+      body: JSON.stringify({ text, language, voice }),
+    }),
+  smartRemixMusic: (assetId: string, targetDurationUs: number, outroStartUs?: number) =>
+    reqJson<{ asset: MediaAsset }>('/api/audio/smart-remix', {
+      method: 'POST',
+      body: JSON.stringify({ assetId, targetDurationUs, outroStartUs }),
+    }),
+  scanLocalCapCutDrafts: () =>
+    reqJson<{ drafts: Array<{ name: string; draftPath: string; modifiedAt: number }> }>('/api/interop/scan-capcut-local'),
+  importLocalCapCutDraftPath: (draftPath: string) =>
+    reqJson<{ project: Project; report?: Record<string, unknown> }>('/api/interop/import-path-draft', {
+      method: 'POST',
+      body: JSON.stringify({ draftPath }),
+    }),
+  importUniversalFile: (filename: string, contentBase64: string) =>
+    reqJson<{
+      kind: 'project' | 'lottie';
+      project?: Project;
+      report?: {
+        compatibilityPct: number;
+        mappedItems: string[];
+        fallbackItems: string[];
+        missingMediaSlots: Array<{ slotIndex: number; clipId: string; originalPath: string; label: string; durationUs: number }>;
+      };
+      lottieJson?: string;
+      name?: string;
+    }>('/api/interop/import-universal', {
+      method: 'POST',
+      body: JSON.stringify({ filename, contentBase64 }),
+    }),
+  exportTemplatePack: (projectId: string, templateName?: string) =>
+    reqJson<{ filename: string; contentBase64: string }>('/api/templates/export-pack', {
+      method: 'POST',
+      body: JSON.stringify({ projectId, templateName }),
+    }),
   downloadWhisperModel: (variant: 'tiny' | 'base' = 'tiny') =>
     reqJson<{ modelPath: string; bytes: number }>('/api/ai/download-whisper', {
       method: 'POST',
@@ -212,13 +251,74 @@ export const engineApi = {
   analyzeAi: <T = Record<string, unknown>>(
     projectId: string,
     assetId: string,
-    task: 'silence' | 'scenes' | 'beats' | 'transcribe' | 'matting' | 'face-track',
-    language = 'vi'
+    task:
+      | 'silence'
+      | 'scenes'
+      | 'beats'
+      | 'transcribe'
+      | 'matting'
+      | 'object-matting'
+      | 'face-track'
+      | 'highlights'
+      | 'remove-fillers'
+      | 'stabilize'
+      | 'upscale'
+      | 'stem-separate',
+    language = 'vi',
+    extra?: { normX?: number; normY?: number }
   ) =>
     reqJson<T>('/api/ai/analyze', {
       method: 'POST',
-      body: JSON.stringify({ projectId, assetId, task, language }),
+      body: JSON.stringify({ projectId, assetId, task, language, ...extra }),
     }),
+  openWysiwygFramePipeSocket: async (
+    jobId: string
+  ): Promise<{ sendFrame: (rgba: Uint8Array) => Promise<void>; close: () => void } | null> => {
+    try {
+      const loc = window.location;
+      const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      const token = getSessionToken();
+      const baseOrigin = API_BASE ? API_BASE.replace(/^http/, 'ws') : `${proto}//${loc.host}`;
+      const wsUrl = `${baseOrigin}/ws/export/${encodeURIComponent(jobId)}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+      const ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('WS timeout')), 1500);
+        ws.onopen = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        ws.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error('WS error'));
+        };
+      });
+      const ackQueue: Array<() => void> = [];
+      ws.onmessage = () => {
+        ackQueue.shift()?.();
+      };
+      return {
+        sendFrame: (rgba: Uint8Array) =>
+          new Promise<void>((resolve, reject) => {
+            if (ws.readyState !== WebSocket.OPEN) {
+              reject(new Error('WS closed'));
+              return;
+            }
+            ackQueue.push(resolve);
+            ws.send(rgba);
+          }),
+        close: () => {
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
+        },
+      };
+    } catch {
+      return null;
+    }
+  },
   prerenderClip: (projectId: string, clipId: string) =>
     reqJson<{ hash: string; filePath: string; cacheHit: boolean; project: Project }>('/api/prerender', {
       method: 'POST',

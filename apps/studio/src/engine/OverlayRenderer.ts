@@ -6,6 +6,7 @@ import {
   type StickerState,
   type TextStyleState,
 } from '@t-capcut/schema';
+import { renderLottieFrameToCanvas } from './LottieCache';
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
@@ -467,7 +468,19 @@ export function drawStickerOverlay2D(
   let boxW = 240 * bs;
   let boxH = 84 * bs;
 
-  if (s.iconType === 'subscribe') {
+  if (s.lottieJson) {
+    const lottieCanvas = renderLottieFrameToCanvas(s.lottieJson, tSec, s.lottieDurationSec);
+    if (lottieCanvas) {
+      boxW = 300 * bs;
+      boxH = 300 * bs;
+      ctx.drawImage(lottieCanvas, -boxW * 0.5, -boxH * 0.5, boxW, boxH);
+    } else {
+      ctx.fillStyle = s.primaryColor;
+      ctx.beginPath();
+      ctx.roundRect(-boxW * 0.5, -boxH * 0.5, boxW, boxH, 16 * bs);
+      ctx.fill();
+    }
+  } else if (s.iconType === 'subscribe') {
     boxW = 330 * bs;
     boxH = 86 * bs;
     ctx.fillStyle = s.primaryColor || '#EF4444';
@@ -596,23 +609,33 @@ export function renderAllOverlays2D(
   playheadUs: Microseconds,
   w: number,
   h: number,
-  options?: { selectedClipId?: string | null; burnSubtitles?: boolean }
+  options?: { selectedClipId?: string | null; burnSubtitles?: boolean; layerFilter?: 'all' | 'behind' | 'front'; skipClear?: boolean }
 ): void {
-  ctx.clearRect(0, 0, w, h);
+  if (!options?.skipClear) {
+    ctx.clearRect(0, 0, w, h);
+  }
+  const filterMode = options?.layerFilter ?? 'all';
 
-  // 1. Render Stickers & Particles first (so subtitles remain crisp & legible above particles)
-  const activeStickers = flatClips.filter(
-    (c) => c.kind === 'sticker' && c.sticker && playheadUs >= c.timelineStartUs && playheadUs < c.timelineStartUs + c.durationUs
-  );
-  for (const sc of activeStickers) {
-    drawStickerOverlay2D(ctx, sc, playheadUs, w, h, options?.selectedClipId === sc.id);
+  // 1. Render Stickers & Particles (only in 'all' or 'front')
+  if (filterMode !== 'behind') {
+    const activeStickers = flatClips.filter(
+      (c) => c.kind === 'sticker' && c.sticker && playheadUs >= c.timelineStartUs && playheadUs < c.timelineStartUs + c.durationUs
+    );
+    for (const sc of activeStickers) {
+      drawStickerOverlay2D(ctx, sc, playheadUs, w, h, options?.selectedClipId === sc.id);
+    }
   }
 
   // 2. Render Text, Titles, Lower-Thirds & Karaoke Word Animations
   if (options?.burnSubtitles !== false) {
-    const activeTexts = flatClips.filter(
-      (c) => c.kind === 'text' && c.text && playheadUs >= c.timelineStartUs && playheadUs < c.timelineStartUs + c.durationUs
-    );
+    const activeTexts = flatClips.filter((c) => {
+      if (c.kind !== 'text' || !c.text) return false;
+      if (playheadUs < c.timelineStartUs || playheadUs >= c.timelineStartUs + c.durationUs) return false;
+      const isBehind = Boolean(c.text.behindSubject);
+      if (filterMode === 'behind') return isBehind;
+      if (filterMode === 'front') return !isBehind;
+      return true;
+    });
     for (const tc of activeTexts) {
       drawTextOverlay2D(ctx, tc, playheadUs, w, h, options?.selectedClipId === tc.id);
     }

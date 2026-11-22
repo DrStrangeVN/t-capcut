@@ -150,6 +150,7 @@ export async function runWysiwygClientExport(
   project: Project,
   options: {
     codec: 'h264' | 'hevc' | 'prores';
+    tenBitHevc?: boolean;
     fps: number;
     burnSubtitles: boolean;
     loudnorm: boolean;
@@ -178,6 +179,7 @@ export async function runWysiwygClientExport(
   const { jobId } = await engineApi.startExport(project.id, {
     mode: 'wysiwyg-pipe',
     codec: options.codec,
+    tenBitHevc: options.tenBitHevc,
     width: outW,
     height: outH,
     fps,
@@ -198,8 +200,13 @@ export async function runWysiwygClientExport(
   outCanvas.width = outW;
   outCanvas.height = outH;
   const outCtx = outCanvas.getContext('2d', { willReadFrequently: true })!;
+  const behindCanvas = document.createElement('canvas');
+  behindCanvas.width = outW;
+  behindCanvas.height = outH;
+  const behindCtx = behindCanvas.getContext('2d')!;
 
   const { mediaMap, maskMap } = await loadExportMediaMaps(project, flat);
+  const wsPipe = await engineApi.openWysiwygFramePipeSocket(jobId);
 
   try {
     const spanUs = Math.max(US_PER_SEC, rEnd - rStart);
@@ -230,21 +237,45 @@ export async function runWysiwygClientExport(
         })
       );
 
-      compositor.renderFrame(project, curUs, mediaMap, maskMap, { forceUpload: true, skipGlow: true });
+      const hasBehind = flat.some(
+        (c) => c.kind === 'text' && c.text?.behindSubject && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs
+      );
+      if (hasBehind) {
+        renderAllOverlays2D(behindCtx, flat, curUs, outW, outH, {
+          burnSubtitles: options.burnSubtitles,
+          layerFilter: 'behind',
+        });
+      }
+
+      compositor.renderFrame(project, curUs, mediaMap, maskMap, {
+        forceUpload: true,
+        skipGlow: true,
+        behindOverlayCanvas: hasBehind ? behindCanvas : null,
+      });
       outCtx.clearRect(0, 0, outW, outH);
       outCtx.drawImage(glCanvas, 0, 0, outW, outH);
 
-      renderAllOverlays2D(outCtx, flat, curUs, outW, outH, { burnSubtitles: options.burnSubtitles });
+      renderAllOverlays2D(outCtx, flat, curUs, outW, outH, {
+        burnSubtitles: options.burnSubtitles,
+        layerFilter: 'front',
+        skipClear: true,
+      });
 
       const rgba = outCtx.getImageData(0, 0, outW, outH).data;
-      await engineApi.sendWysiwygFrame(jobId, new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.byteLength));
-      options.onProgress(Math.min(98, Math.round(((f + 1) / totalFrames) * 100)), `Frame ${f + 1}/${totalFrames}`);
+      const u8 = new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.byteLength);
+      if (wsPipe) {
+        await wsPipe.sendFrame(u8);
+      } else {
+        await engineApi.sendWysiwygFrame(jobId, u8);
+      }
+      options.onProgress(Math.min(98, Math.round(((f + 1) / totalFrames) * 100)), `Frame ${f + 1}/${totalFrames}${wsPipe ? ' ⚡WS' : ''}`);
     }
 
     const finished = await engineApi.finishWysiwygFrames(jobId);
     options.onProgress(100, '100%');
     return finished.result;
   } finally {
+    wsPipe?.close();
     disposeMediaMaps(compositor, mediaMap, maskMap);
   }
 }

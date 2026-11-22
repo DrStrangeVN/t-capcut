@@ -39,9 +39,9 @@ cat > "$APP_DIR/Contents/Info.plist" << 'EOF'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>3.0.0</string>
+  <string>4.0.0</string>
   <key>CFBundleVersion</key>
-  <string>300</string>
+  <string>400</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
@@ -83,12 +83,12 @@ codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
 
 echo "==> [5/5] Creating macOS DMG Installer..."
 DMG_STAGE="$ROOT_DIR/dist/dmg-stage"
-DMG_OUT="$ROOT_DIR/dist/T-CapCut-3.0.0-arm64.dmg"
+DMG_OUT="$ROOT_DIR/dist/T-CapCut-4.0.0-arm64.dmg"
 rm -rf "$DMG_STAGE" "$DMG_OUT"
 mkdir -p "$DMG_STAGE"
 cp -R "$APP_DIR" "$DMG_STAGE/T-CapCut.app"
 ln -s /Applications "$DMG_STAGE/Applications"
-hdiutil create -volname "T-CapCut 3.0.0" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_OUT" >/dev/null
+hdiutil create -volname "T-CapCut 4.0.0" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_OUT" >/dev/null
 rm -rf "$DMG_STAGE"
 
 shasum -a 256 "$DMG_OUT" > "${DMG_OUT}.sha256"

@@ -28,6 +28,7 @@ export interface CapCutSegment {
   material_id: string;
   target_timerange: CapCutTimeRange;
   source_timerange?: CapCutTimeRange;
+  extra_material_refs?: string[];
   speed?: number;
   volume?: number;
   visible?: boolean;
@@ -47,6 +48,17 @@ export interface CapCutSegment {
       values: number[];
     }>;
   }>;
+}
+
+export interface CapCutMaterialRef {
+  id: string;
+  name?: string;
+  type?: string;
+  effect_id?: string;
+  duration?: number;
+  fade_in_duration?: number;
+  fade_out_duration?: number;
+  curve_infos?: Array<{ position: number; speed: number }>;
 }
 
 export interface CapCutTrack {
@@ -95,9 +107,31 @@ export interface CapCutDraftContent {
     speeds: Array<{
       id: string;
       speed: number;
+      mode?: number;
+      curve_infos?: Array<{ position: number; speed: number }>;
     }>;
+    transitions?: CapCutMaterialRef[];
+    video_effects?: CapCutMaterialRef[];
+    effects?: CapCutMaterialRef[];
+    audio_fades?: CapCutMaterialRef[];
+    filters?: CapCutMaterialRef[];
   };
   tracks: CapCutTrack[];
+}
+
+export interface CapCutSlotInfo {
+  slotIndex: number;
+  clipId: string;
+  originalPath: string;
+  label: string;
+  durationUs: number;
+}
+
+export interface CapCutImportReport {
+  compatibilityPct: number;
+  mappedItems: string[];
+  fallbackItems: string[];
+  missingMediaSlots: CapCutSlotInfo[];
 }
 
 function mapTrackTypeToCapCut(t: TrackType): CapCutTrack['type'] {
@@ -108,17 +142,79 @@ function mapTrackTypeToCapCut(t: TrackType): CapCutTrack['type'] {
   return 'effect';
 }
 
-function extractTextContent(raw: string): string {
-  // CapCut sometimes stores rich JSON inside text material content
+function extractRichText(raw: string): { text: string; color?: string; strokeColor?: string; fontSize?: number } {
   if (raw.startsWith('{')) {
     try {
-      const parsed = JSON.parse(raw) as { text?: string };
-      if (typeof parsed.text === 'string') return parsed.text;
+      const parsed = JSON.parse(raw) as {
+        text?: string;
+        styles?: Array<{ fill?: { content?: { solid?: { color?: number[] } } }; strokes?: Array<{ content?: { solid?: { color?: number[] } } }>; size?: number }>;
+      };
+      const firstStyle = parsed.styles?.[0];
+      const toHex = (rgb?: number[]) =>
+        rgb && rgb.length >= 3
+          ? `#${rgb.slice(0, 3).map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('')}`
+          : undefined;
+      return {
+        text: typeof parsed.text === 'string' ? parsed.text : raw,
+        color: toHex(firstStyle?.fill?.content?.solid?.color),
+        strokeColor: toHex(firstStyle?.strokes?.[0]?.content?.solid?.color),
+        fontSize: typeof firstStyle?.size === 'number' ? Math.round(firstStyle.size * 6) : undefined,
+      };
     } catch {
       // fall through
     }
   }
-  return raw;
+  return { text: raw };
+}
+
+function mapExternalTransitionId(rawName: string): string {
+  const q = rawName.toLowerCase();
+  if (/whip.*left|pan.*left|slide.*left/.test(q)) return 'whip_left';
+  if (/whip.*right|pan.*right|slide.*right/.test(q)) return 'whip_right';
+  if (/flash|white/.test(q)) return 'flash_white';
+  if (/glitch|cyber/.test(q)) return 'glitch';
+  if (/zoom.*in|pull.*in/.test(q)) return 'zoom_in';
+  if (/zoom.*out|push/.test(q)) return 'zoom_out';
+  if (/spin|vortex/.test(q)) return 'spin';
+  if (/burn/.test(q)) return 'film_burn';
+  if (/light|leak/.test(q)) return 'light_leak';
+  if (/iris|circle/.test(q)) return 'iris_circle';
+  if (/black|dip/.test(q)) return 'dip_black';
+  if (/wipe/.test(q)) return 'wipe_left';
+  if (/cube/.test(q)) return 'cube_turn';
+  return 'dissolve';
+}
+
+function mapExternalVfxId(rawName: string): string {
+  const q = rawName.toLowerCase();
+  if (/vhs|retro|tape/.test(q)) return 'vhs';
+  if (/grain|8mm|film/.test(q)) return 'super8_grain';
+  if (/halat|bloom|glow/.test(q)) return 'halation';
+  if (/glitch|rgb/.test(q)) return 'glitch';
+  if (/shake|tremor/.test(q)) return 'perlin_shake';
+  if (/blur|bokeh|focus/.test(q)) return 'gaussian_blur';
+  if (/pulse|beat/.test(q)) return 'beat_pulse';
+  if (/dream|mist|soft/.test(q)) return 'dreamy';
+  if (/chroma|aberr/.test(q)) return 'chromatic';
+  if (/prism/.test(q)) return 'prism_rainbow';
+  if (/mosaic|pixel|censor/.test(q)) return 'pixel_mosaic';
+  if (/neon|edge/.test(q)) return 'neon_edge';
+  if (/skin|beauty|smooth/.test(q)) return 'skin_beauty';
+  return 'dreamy';
+}
+
+function mapExternalLutId(rawName: string): string | null {
+  const q = rawName.toLowerCase();
+  if (/kodak|2383/.test(q)) return 'lut_kodak_2383';
+  if (/fuji|eterna|vlog/.test(q)) return 'lut_fuji_eterna';
+  if (/cinestill|800t|night/.test(q)) return 'lut_cinestill_800t';
+  if (/teal|orange|cinema/.test(q)) return 'lut_teal_orange';
+  if (/pastel|seoul|soft/.test(q)) return 'lut_seoul_pastel';
+  if (/bw|mono|noir|leica/.test(q)) return 'lut_leica_bw';
+  if (/cyber|tokyo|neon/.test(q)) return 'lut_tokyo_cyber';
+  if (/golden|warm|sunset/.test(q)) return 'lut_golden_hour';
+  if (/food|vivid|vibrant/.test(q)) return 'lut_food_vibrant';
+  return null;
 }
 
 export function exportToCapCutDraft(project: Project): CapCutDraftContent {
@@ -230,9 +326,17 @@ export function exportToCapCutDraft(project: Project): CapCutDraftContent {
   };
 }
 
-export function importFromCapCutDraft(draft: CapCutDraftContent, projectId?: string): Project {
+export function importFromCapCutDraftDetailed(
+  draft: CapCutDraftContent,
+  projectId?: string,
+  checkPathExists?: (filePath: string) => boolean
+): { project: Project; report: CapCutImportReport } {
   const id = projectId ?? draft.id ?? `proj_${Date.now()}`;
   const project = createEmptyProject(id, draft.name || 'Imported CapCut Draft');
+  const mappedItems: string[] = [];
+  const fallbackItems: string[] = [];
+  const missingMediaSlots: CapCutSlotInfo[] = [];
+
   project.settings.width = draft.canvas_config?.width || 1920;
   project.settings.height = draft.canvas_config?.height || 1080;
   project.settings.fps = draft.fps || 30;
@@ -284,10 +388,17 @@ export function importFromCapCutDraft(draft: CapCutDraftContent, projectId?: str
   }
 
   const textMap = new Map((draft.materials?.texts ?? []).map((t) => [t.id, t]));
+  const speedMap = new Map((draft.materials?.speeds ?? []).map((s) => [s.id, s]));
+  const transMap = new Map((draft.materials?.transitions ?? []).map((t) => [t.id, t]));
+  const vfxMap = new Map([...(draft.materials?.video_effects ?? []), ...(draft.materials?.effects ?? [])].map((e) => [e.id, e]));
+  const fadeMap = new Map((draft.materials?.audio_fades ?? []).map((f) => [f.id, f]));
+  const filterMap = new Map((draft.materials?.filters ?? []).map((f) => [f.id, f]));
+
   const tracks: Track[] = [];
   let seenMainVideo = false;
+  let slotCounter = 0;
 
-  draft.tracks.forEach((ct, idx) => {
+  (draft.tracks ?? []).forEach((ct, idx) => {
     let type: TrackType = 'video';
     if (ct.type === 'audio') type = 'audio';
     else if (ct.type === 'text') type = 'text';
@@ -329,7 +440,20 @@ export function importFromCapCutDraft(draft: CapCutDraftContent, projectId?: str
                 ? 'image'
                 : 'video';
 
+      if (asset && (kind === 'video' || kind === 'image') && checkPathExists && !checkPathExists(asset.sourcePath)) {
+        missingMediaSlots.push({
+          slotIndex: slotCounter++,
+          clipId: seg.id,
+          originalPath: asset.sourcePath,
+          label: asset.name || `Slot ${slotCounter}`,
+          durationUs: seg.target_timerange.duration,
+        });
+      }
+
       const transform = createDefaultTransform();
+      if (project.settings.aspectRatio !== '16:9') {
+        transform.fillMode = 'cover';
+      }
       if (seg.clip) {
         transform.opacity = seg.clip.alpha ?? 1;
         transform.rotation = seg.clip.rotation ?? 0;
@@ -347,6 +471,64 @@ export function importFromCapCutDraft(draft: CapCutDraftContent, projectId?: str
       const audio = createDefaultAudioState();
       audio.volume = seg.volume ?? 1;
 
+      const colorGrade = createDefaultColorGrade();
+      const effects: Clip['effects'] = [];
+      let transitionIn: Clip['transitionIn'] = null;
+
+      for (const refId of seg.extra_material_refs ?? []) {
+        const sp = speedMap.get(refId);
+        if (sp) {
+          speed.rate = sp.speed ?? speed.rate;
+          if (sp.curve_infos && sp.curve_infos.length >= 2) {
+            speed.mode = 'curve';
+            speed.curvePoints = sp.curve_infos;
+          }
+          mappedItems.push(`Speed (${speed.rate}x)`);
+        }
+        const fd = fadeMap.get(refId);
+        if (fd) {
+          audio.fadeInUs = fd.fade_in_duration ?? 0;
+          audio.fadeOutUs = fd.fade_out_duration ?? 0;
+          mappedItems.push('Audio Fade In/Out');
+        }
+        const tr = transMap.get(refId);
+        if (tr) {
+          const mapped = mapExternalTransitionId(tr.name || tr.type || '');
+          transitionIn = {
+            id: `tr_${refId}`,
+            name: tr.name || mapped,
+            type: mapped,
+            durationUs: tr.duration || 450_000,
+          };
+          mappedItems.push(`Transition: ${tr.name || mapped}`);
+        }
+        const fx = vfxMap.get(refId);
+        if (fx) {
+          const mappedVfx = mapExternalVfxId(fx.name || fx.type || '');
+          effects.push({
+            id: `fx_${refId}`,
+            name: fx.name || mappedVfx,
+            shaderId: mappedVfx,
+            intensity: 0.72,
+            speed: 1,
+            scale: 1,
+            enabled: true,
+          });
+          mappedItems.push(`VFX: ${fx.name || mappedVfx} -> ${mappedVfx}`);
+        }
+        const flt = filterMap.get(refId);
+        if (flt) {
+          const mappedLut = mapExternalLutId(flt.name || flt.type || '');
+          if (mappedLut) {
+            colorGrade.lutId = mappedLut;
+            colorGrade.lutName = flt.name || mappedLut;
+            mappedItems.push(`LUT Filter: ${flt.name || mappedLut}`);
+          } else {
+            fallbackItems.push(`Filter "${flt.name || refId}" (dùng màu trung tính)`);
+          }
+        }
+      }
+
       const keyframes: Clip['keyframes'] = {};
       for (const grp of seg.common_keyframes ?? []) {
         const key = grp.property_type as keyof Clip['keyframes'];
@@ -358,12 +540,13 @@ export function importFromCapCutDraft(draft: CapCutDraftContent, projectId?: str
         }));
       }
 
+      const rich = textMat ? extractRichText(textMat.content) : null;
       const clip: Clip = {
         id: seg.id,
         trackId: track.id,
         assetId: textMat ? null : seg.material_id,
         kind,
-        name: textMat ? extractTextContent(textMat.content) : asset?.name ?? seg.id,
+        name: rich ? rich.text : asset?.name ?? seg.id,
         timelineStartUs: seg.target_timerange.start,
         durationUs: seg.target_timerange.duration,
         sourceStartUs: seg.source_timerange?.start ?? 0,
@@ -371,29 +554,50 @@ export function importFromCapCutDraft(draft: CapCutDraftContent, projectId?: str
         locked: false,
         disabled: seg.visible === false,
         transform,
-        colorGrade: createDefaultColorGrade(),
+        colorGrade,
         chromaKey: createDefaultChromaKey(),
         mask: createDefaultMask(),
         speed,
         audio,
         keyframes,
-        text: textMat
+        text: textMat && rich
           ? {
-              ...createDefaultTextStyle(extractTextContent(textMat.content)),
-              fontSize: textMat.font_size ?? 56,
-              color: textMat.text_color ?? '#FFFFFF',
+              ...createDefaultTextStyle(rich.text),
+              fontSize: rich.fontSize ?? textMat.font_size ?? 56,
+              color: rich.color ?? textMat.text_color ?? '#FFFFFF',
+              strokeColor: rich.strokeColor ?? '#000000',
             }
           : undefined,
-        effects: [],
+        transitionIn,
+        effects,
         aiMattingEnabled: false,
         autoReframeEnabled: false,
       };
       project.clips[clip.id] = clip;
+      if (kind !== 'video' && kind !== 'audio' && !mappedItems.some((m) => m.includes(clip.id))) {
+        mappedItems.push(`Clip ${clip.kind}: ${clip.name.slice(0, 24)}`);
+      }
     }
   });
 
   if (tracks.length > 0) {
     project.tracks = tracks;
   }
-  return project;
+
+  const totalItems = Math.max(1, mappedItems.length + fallbackItems.length + Object.keys(project.clips).length);
+  const compatibilityPct = Math.max(50, Math.min(100, Math.round(((totalItems - fallbackItems.length) / totalItems) * 100)));
+
+  return {
+    project,
+    report: {
+      compatibilityPct,
+      mappedItems: Array.from(new Set(mappedItems)),
+      fallbackItems,
+      missingMediaSlots,
+    },
+  };
+}
+
+export function importFromCapCutDraft(draft: CapCutDraftContent, projectId?: string): Project {
+  return importFromCapCutDraftDetailed(draft, projectId).project;
 }

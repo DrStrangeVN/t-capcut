@@ -2,26 +2,30 @@
   <img src="assets/logo.png" width="128" height="128" alt="T-CapCut Obsidian Liquid Glass Logo" />
 </p>
 
-# T-CapCut v3.0 — Obsidian Liquid Glass Video Editor + Offline Creative Ecosystem
+# T-CapCut v4.0 — Obsidian Liquid Glass Video Editor + Universal Template & AI Studio
 
 **T-CapCut** là trình dựng phim phi tuyến (NLE) local-first dành cho macOS Apple Silicon (và Web), được phát triển từ kết quả phân tích kiến trúc `CapCut.app` kết hợp chuẩn **macOS Tahoe 2-Layer Liquid Glass HIG** (`NSGlassEffectView` cho thanh nổi/toolbar + Obsidian Matte tương phản cao cho Content/Colorist).
 
-## Kho Nội Dung Sáng Tạo Offline Tích Hợp Sẵn (v3.0 — 100% Nhúng Trong App, Không Cần Internet)
+## Kho Nội Dung & Hệ Sinh Thái Mẫu Dùng Chung (v4.0 — 100% Offline)
 
-- **36 Hiệu Ứng GPU Shader VFX (`@t-capcut/presets`) + Multi-Pass Ping-Pong FBO Stack**:
-  - Xếp chồng nhiều hiệu ứng GPU đồng thời (Retro/VHS/Super 8mm/Halation, Anamorphic Flare/Prism/God Rays/Dreamy, Glitch/Datamosh/Holo/Cyber Grid, Beat Pulse/Fisheye/Kaleidoscope, Tilt-Shift/Mosaic/Frosted Glass, Duotone/Thermal/Night Vision/Sketch).
-- **24 Chuyển Cảnh Dual-Texture (`[⊞]` Nút Vết Cắt Nhanh Trên Timeline)**:
-  - Blend trực tiếp giữa frame cuối Clip A & frame đầu Clip B (Whip Left/Right/Up/Down, Zoom In/Out, Spin, Dip Black, Flash White, Film Burn, Light Leak, Iris Circle, Clock Wipe, Diagonal Slash, Glitch, Water Ripple, Swirl Blur) + **tùy chọn tự chèn SFX Whoosh/Glitch khớp nhịp**.
-- **24 Sticker Động & Hệ Thống Hạt Bay (`Snow`, `Rain`, `Dust`, `Hearts`, `Confetti`, `Bokeh`)**:
-  - Creator UI Buttons (`Subscribe + Bell`, `REC ● 4K`, `Countdown 3-2-1`, `Audio Wave HUD`, `Progress Bar`), Nhãn Sale/Rank/4K & Hiệu ứng Hạt Bay đồng nhất 100% giữa Preview & Export.
-- **25 Mẫu Chữ, Karaoke Viral & Lower-Third + Animation In / Out / Loop**:
-  - 8 phong cách Karaoke Viral (`Hormozi Pop`, `Classic Pill`, `Liquid Glass`, `Sweep Fill`, `Neon Cyber`, `Minimal Podcast`, `Comic Punch`, `Documentary`), 6 Intro Titles, 6 Lower-Thirds & 5 Social Review Cards.
-- **16 Bộ Màu 3D `.cube` LUT Chuyên Nghiệp (Cinema, Apple/Sony/DJI Log → Rec.709, Vlog, Moody) + Local Pack Importer**:
-  - Tích hợp sẵn 16 file `.cube` 17³ offline (`Kodak 2383`, `Fuji Eterna`, `CineStill 800T`, `Teal & Orange`, `Apple Log`, `Sony S-Log3`, `DJI D-Log M`, `Tokyo Cyber Neon`, `Leica B&W`...) và hỗ trợ nhập pack `.cube`/`.m4a` cá nhân.
-- **15 Bài Nhạc Nền Royalty-Free (Beat Grid BPM Chính Xác + Auto Beat Markers) & 40 Creator SFX**:
-  - Nghe thử Audio inline ngay trong Studio Palette trước khi kéo thả vào Timeline.
-- **12 Smart Video Templates + Slot Replacement Wizard (`Fill: Cover/Fit`)**:
-  - Dựng nhanh TikTok Beat-Sync Flash, Daily Aesthetic Vlog, Hormozi Viral Talking Head, Product Commercial... chỉ với **Auto-Fill từ Media Bin** + chế độ `Lấp Đầy Khung (Cover)` không viền đen trên mọi tỉ lệ `9:16` / `1:1` / `2.35:1`.
+- **Universal Template Hub (Dùng chung mẫu từ CapCut, After Effects, Final Cut, DaVinci)**:
+  - **CapCut / JianYing Draft Bridge v2**: Đọc `.capcut`, `draft_content.json` hoặc quét trực tiếp thư mục dự án CapCut trên Mac (`extra_material_refs` transitions/VFX/speed curve/audio fade/rich text) kèm **Báo Cáo Tương Thích (`%`) & Auto-Slot Replacement**.
+  - **Lottie Motion Graphics Engine**: Tích hợp `lottie-web` chạy sẵn 6 mẫu vector Lottie offline + hỗ trợ nhập file `.json`/`.lottie` từ After Effects & LottieFiles.
+  - **Interop 2 chiều FCPXML 1.11 / OTIO** + **Đóng gói chia sẻ `.tcapcut-tpl`** ("Lưu Thành Mẫu").
+- **48 Hiệu Ứng GPU Shader VFX (`@t-capcut/presets`) + Multi-Pass Ping-Pong FBO Stack**:
+  - Bổ sung 12 Shader v4.0: *Organic Perlin Shake Pro, Face Beauty Bilateral, Whip Zoom Beat Blur, Beat RGB Prism, Curved CRT Monitor, Rain Drops On Lens, Cyber Aura Edge Halo, Deep Bokeh Tilt-Shift Pro, 35mm Halation Pro, Anime Speed Lines, Plasma Violet Heat, Liquid Glass Ripple*.
+- **32 Chuyển Cảnh Dual-Texture (`[⇄]` Nút Vết Cắt Nhanh + Auto-SFX Sync)**:
+  - Bổ sung 8 chuyển cảnh mới: *3D Cube Perspective Spin, 3D Card Flip, Cinema Page Peel, Luma Cloud Matte, Whip Zoom Beat Cut, Talking-Head Morph Cut, Mosaic Glass Tiles, Radial RGB Hyper Flash*.
+- **30 Sticker Động (6 Lottie Vector + 18 Creator UI/Badge + 6 GPU Particles)**:
+  - Hỗ trợ nhập Lottie ngoài và Gizmo Scale/Rotate trực tiếp trên khung Player.
+- **15 Nhạc Nền Studio (40–48s, Intro → Verse → Build-up → Drop → Outro) & 40 Creator SFX + Smart Music Remix**:
+  - Hỗ trợ **Smart Music Remix** tự co giãn khớp đúng độ dài video với đoạn Outro kết mượt + **5-Band Parametric EQ, Compressor, Noise Gate, Pitch Semitones & Live LUFS Metering**.
+- **25 Mẫu Chữ, Karaoke Viral, Text Behind Subject & Font Hệ Thống macOS**:
+  - **1-Click Chữ Sau Chủ Thể** kẹp tiêu đề giữa hậu cảnh và chủ thể tách bằng Apple Vision + **Song ngữ VI/EN**.
+- **On-Device AI Studio v4 + T-ChatCut v3 Agentic Director**:
+  - **AI Auto-Highlight Viral 9:16**, **Click-to-Segment Vật Thể** (`VNGenerateForegroundInstanceMaskRequest`), **Offline AI Voiceover Tiếng Việt (`Linh`) / English + Tự tạo Karaoke**, **Xóa Từ Thừa ("ờ, à, ừm")**, **Chống rung 2D**, **Upscale 2× Crisp**, **Tách Vocals / Nhạc Nền (AI Stems)**, và **Script-to-Timeline** qua `T-ChatCut ⌘K`.
+- **Hiệu năng & Pro NLE Workflow**:
+  - **Binary WebSocket WYSIWYG Frame Pipe** + tùy chọn **10-bit HEVC (`p010le`)**, **Preview Resolution Scale (`Full` / `1/2` / `1/4`)**, **Hover Live-Preview** LUT & VFX, **Vectorscope** kèm I-Line tông da, **Context Menu Copy/Paste Attributes**, **Command Palette (`⌘P`)** & **Fullscreen Preview (`⌘⇧F`)**.
 
 ## Nâng cấp kiến trúc & UI/UX Pro NLE (v2.0 → v3.0)
 

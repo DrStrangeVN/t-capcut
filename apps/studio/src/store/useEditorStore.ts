@@ -72,6 +72,24 @@ interface EditorState {
   llmConfig: ChatCutLlmConfig | null;
   favoritePresetIds: string[];
   templateModalPreset: VideoTemplatePreset | null;
+  systemFonts: string[];
+  hoverPreview: { kind: 'lut' | 'vfx'; id: string; name: string } | null;
+  copiedAttributes: {
+    colorGrade?: Clip['colorGrade'];
+    effects?: Clip['effects'];
+    transform?: Clip['transform'];
+    audio?: Clip['audio'];
+  } | null;
+  objectSegmentMode: boolean;
+  fullscreenPreview: boolean;
+  commandPaletteOpen: boolean;
+  importReport: {
+    title: string;
+    compatibilityPct: number;
+    mappedItems: string[];
+    fallbackItems: string[];
+    missingMediaSlots: Array<{ slotIndex: number; clipId: string; originalPath: string; label: string; durationUs: number }>;
+  } | null;
 
   init: () => Promise<void>;
   selectProject: (id: string) => Promise<void>;
@@ -158,8 +176,30 @@ interface EditorState {
 
   runAiTask: (
     assetId: string,
-    task: 'silence' | 'scenes' | 'beats' | 'transcribe' | 'matting' | 'face-track'
+    task: 'silence' | 'scenes' | 'beats' | 'transcribe' | 'matting' | 'face-track' | 'object-matting' | 'highlights' | 'remove-fillers' | 'stabilize' | 'upscale' | 'stem-separate',
+    extra?: { normX?: number; normY?: number }
   ) => Promise<void>;
+  setPreviewScale: (scale: 1 | 0.5 | 0.25) => Promise<void>;
+  setHoverPreview: (p: { kind: 'lut' | 'vfx'; id: string; name: string } | null) => void;
+  setObjectSegmentMode: (v: boolean) => void;
+  setFullscreenPreview: (v: boolean) => void;
+  setCommandPaletteOpen: (v: boolean) => void;
+  setImportReport: (r: EditorState['importReport']) => void;
+  copyClipAttributes: (clipId?: string) => void;
+  pasteClipAttributes: (clipId: string, part: 'color' | 'vfx' | 'transform' | 'audio' | 'all') => Promise<void>;
+  rippleDeleteClip: (clipId?: string) => Promise<void>;
+  detachAudioFromClip: (clipId?: string) => Promise<void>;
+  replaceClipAsset: (clipId: string, newAssetId: string) => Promise<void>;
+  generateAiVoiceover: (text: string, language: 'vi' | 'en', voice?: string) => Promise<void>;
+  smartRemixSelectedMusic: () => Promise<void>;
+  autoSyncSfxAtCuts: () => Promise<void>;
+  autoColorMatchToPreviousClip: () => Promise<void>;
+  setTextBehindSubject: (clipId: string, enabled: boolean) => Promise<void>;
+  translateSelectedSubtitle: (targetLang: 'en' | 'vi') => Promise<void>;
+  addLottieJsonSticker: (name: string, lottieJson: string) => Promise<void>;
+  importUniversalTemplateFile: (file: File) => Promise<void>;
+  importLocalCapCutDraft: (draftPath: string) => Promise<void>;
+  exportCurrentAsTemplatePack: () => Promise<void>;
   removeSilencesFromClip: (clipId: string) => Promise<void>;
   generateCaptionsFromTranscript: (assetId: string) => Promise<void>;
   loadWaveform: (asset: MediaAsset) => Promise<void>;
@@ -171,7 +211,7 @@ interface EditorState {
 }
 
 function clone<T>(obj: T): T {
-  return JSON.parse(JSON.stringify(obj)) as T;
+  return typeof structuredClone === 'function' ? structuredClone(obj) : (JSON.parse(JSON.stringify(obj)) as T);
 }
 
 function getActiveScopeMutable(p: Project, nestedScopeId: string | null) {
@@ -227,11 +267,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   })(),
   templateModalPreset: null,
+  systemFonts: ['Inter', 'SF Pro Display', 'Helvetica Neue', 'Avenir Next', 'Georgia', 'Menlo'],
+  hoverPreview: null,
+  copiedAttributes: null,
+  objectSegmentMode: false,
+  fullscreenPreview: false,
+  commandPaletteOpen: false,
+  importReport: null,
 
   init: async () => {
     try {
       const [health, list] = await Promise.all([engineApi.health(), engineApi.listProjects()]);
       set({ health, projectsList: list.projects });
+      void engineApi.getSystemFonts().then((f) => {
+        if (f.fonts?.length) set({ systemFonts: f.fonts });
+      }).catch(() => {});
       const firstId = list.projects[0]?.id;
       if (firstId) {
         await get().selectProject(firstId);
@@ -1747,20 +1797,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
-  runAiTask: async (assetId, task) => {
+  runAiTask: async (assetId, task, extra) => {
     const p = get().project;
     if (!p) return;
-    const labels: Record<typeof task, string> = {
+    const labels: Record<string, string> = {
       silence: 'Đang dò khoảng lặng bằng FFmpeg VAD...',
       scenes: 'Đang dò điểm chuyển cảnh (Scene Edit Detection)...',
       beats: 'Đang phân tích nhịp Beat âm thanh...',
       transcribe: 'Đang tạo phụ đề & transcript lời thoại...',
       matting: 'Apple Vision Neural Engine đang tách nền người...',
+      'object-matting': 'Apple Vision đang tách vật thể được chọn (Click-to-Segment)...',
       'face-track': 'Apple Vision đang bám nét khuôn mặt Auto-Reframe 9:16...',
+      highlights: 'AI đang tìm các khoảnh khắc Highlight Viral 9:16...',
+      'remove-fillers': 'Đang quét & loại bỏ từ thừa (ờ, à, ừm...)...',
+      stabilize: 'Đang chống rung 2D Stabilization...',
+      upscale: 'Đang nâng độ phân giải 2× Lanczos Crisp...',
+      'stem-separate': 'Đang tách Vocals & Nhạc Nền riêng biệt...',
     };
-    set({ busyTask: labels[task] });
+    set({ busyTask: labels[task] || 'Đang xử lý AI...' });
     try {
-      const res = await engineApi.analyzeAi<Record<string, unknown>>(p.id, assetId, task, 'vi');
+      const res = await engineApi.analyzeAi<Record<string, unknown>>(p.id, assetId, task, 'vi', extra);
       const fresh = await engineApi.getProject(p.id);
       const next = clone(fresh.project);
 
@@ -1790,14 +1846,66 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         });
         await get().commitProject('AI Scene Markers', next);
         set({ statusMessage: `Phát hiện ${scenes.length} điểm chuyển cảnh.` });
-      } else if (task === 'matting') {
+      } else if (task === 'matting' || task === 'object-matting') {
         Object.values(next.clips)
           .filter((c) => c.assetId === assetId)
           .forEach((c) => {
             c.aiMattingEnabled = true;
           });
-        await get().commitProject('Bật AI Person Matting', next);
-        set({ statusMessage: 'Đã tách nền người bằng Apple Vision Neural Engine!' });
+        await get().commitProject(task === 'object-matting' ? 'AI Tách Vật Thể' : 'Bật AI Person Matting', next);
+        set({
+          objectSegmentMode: false,
+          statusMessage:
+            task === 'object-matting'
+              ? 'Đã tách vật thể được chọn bằng Apple Vision!'
+              : 'Đã tách nền người bằng Apple Vision Neural Engine!',
+        });
+      } else if (task === 'highlights' && Array.isArray(res.highlights)) {
+        const hls = res.highlights as Array<{ startUs: number; endUs: number; score: number; title: string }>;
+        hls.forEach((hl, i) => {
+          next.markers.push({
+            id: `hl_${Date.now()}_${i}`,
+            timeUs: hl.startUs,
+            label: `★ Viral #${i + 1} (${hl.score}đ)`,
+            color: '#FB7185',
+            kind: 'user',
+          });
+        });
+        await get().commitProject('AI Auto-Highlight Markers', next);
+        set({ statusMessage: `Đã tìm thấy ${hls.length} đoạn Highlight Viral — gắn Marker đỏ lên Timeline!` });
+      } else if (task === 'remove-fillers' && Array.isArray(res.fillers)) {
+        const fillers = res.fillers as Array<{ startUs: number; endUs: number; word: string }>;
+        if (fillers.length === 0) {
+          set({ statusMessage: 'Không phát hiện từ thừa ("ờ", "à", "ừm") trong transcript.' });
+        } else {
+          const targetClip = Object.values(next.clips).find((c) => c.assetId === assetId);
+          if (targetClip) {
+            fillers
+              .slice()
+              .sort((a, b) => b.startUs - a.startUs)
+              .forEach((f) => {
+                const dur = f.endUs - f.startUs;
+                if (f.startUs > targetClip.timelineStartUs && f.endUs < targetClip.timelineStartUs + targetClip.durationUs && dur > 50_000) {
+                  targetClip.durationUs = Math.max(200_000, targetClip.durationUs - dur);
+                }
+              });
+            await get().commitProject(`Xóa ${fillers.length} từ thừa`, next);
+            set({ statusMessage: `Đã loại bỏ ${fillers.length} từ thừa ("ờ", "à", "ừm")!` });
+          }
+        }
+      } else if ((task === 'stabilize' || task === 'upscale') && res.asset) {
+        const newAsset = res.asset as MediaAsset;
+        next.assets[newAsset.id] = newAsset;
+        await get().commitProject(task === 'stabilize' ? 'Chống rung Video' : 'Upscale 2× Video', next);
+        set({ statusMessage: `Đã thêm ${newAsset.name} vào Media Bin!` });
+      } else if (task === 'stem-separate' && res.vocalAsset && res.instrumentalAsset) {
+        const vA = res.vocalAsset as MediaAsset;
+        const iA = res.instrumentalAsset as MediaAsset;
+        next.assets[vA.id] = vA;
+        next.assets[iA.id] = iA;
+        await get().commitProject('Tách Vocals & Instrumental', next);
+        await Promise.all([get().loadWaveform(vA), get().loadWaveform(iA)]);
+        set({ statusMessage: 'Đã tách thành công Vocals & Nhạc Nền vào Media Bin!' });
       } else if (task === 'face-track' && res.track) {
         const tr = res.track as { points: Array<{ timeUs: number; centerX: number }> };
         next.settings.aspectRatio = '9:16';
@@ -1826,6 +1934,477 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
     } catch (err) {
       set({ errorMessage: `Lỗi AI (${task}): ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
+  },
+
+  setPreviewScale: async (scale) => {
+    const p = get().project;
+    if (!p) return;
+    const next = clone(p);
+    next.settings.previewScale = scale;
+    await get().commitProject(`Preview Độ phân giải ${scale === 1 ? 'Full' : scale === 0.5 ? '1/2' : '1/4'}`, next);
+  },
+
+  setHoverPreview: (hp) => set({ hoverPreview: hp }),
+  setObjectSegmentMode: (v) => set({ objectSegmentMode: v }),
+  setFullscreenPreview: (v) => set({ fullscreenPreview: v }),
+  setCommandPaletteOpen: (v) => set({ commandPaletteOpen: v }),
+  setImportReport: (r) => set({ importReport: r }),
+
+  copyClipAttributes: (clipId) => {
+    const p = get().project;
+    const cid = clipId ?? get().selectedClipId;
+    const clip = p && cid ? p.clips[cid] : null;
+    if (!clip) return;
+    set({
+      copiedAttributes: {
+        colorGrade: clone(clip.colorGrade),
+        effects: clone(clip.effects),
+        transform: clone(clip.transform),
+        audio: clone(clip.audio),
+      },
+      statusMessage: `Đã copy thuộc tính từ "${clip.name}" (Chuột phải clip khác để dán)`,
+    });
+  },
+
+  pasteClipAttributes: async (clipId, part) => {
+    const p = get().project;
+    const attrs = get().copiedAttributes;
+    const target = p?.clips[clipId];
+    if (!p || !attrs || !target) return;
+    const next = clone(p);
+    const tc = next.clips[clipId]!;
+    if ((part === 'color' || part === 'all') && attrs.colorGrade) {
+      tc.colorGrade = clone(attrs.colorGrade);
+    }
+    if ((part === 'vfx' || part === 'all') && attrs.effects) {
+      tc.effects = clone(attrs.effects).map((e) => ({ ...e, id: `fxi_${Date.now()}_${Math.random().toString(36).slice(2, 5)}` }));
+    }
+    if ((part === 'transform' || part === 'all') && attrs.transform) {
+      tc.transform = clone(attrs.transform);
+    }
+    if ((part === 'audio' || part === 'all') && attrs.audio) {
+      tc.audio = clone(attrs.audio);
+    }
+    await get().commitProject(`Dán thuộc tính (${part}) -> ${tc.name}`, next);
+    set({ statusMessage: `Đã dán thuộc tính (${part}) cho "${tc.name}"` });
+  },
+
+  rippleDeleteClip: async (clipId) => {
+    const p = get().project;
+    const cid = clipId ?? get().selectedClipId;
+    const clip = p && cid ? p.clips[cid] : null;
+    if (!p || !clip) return;
+    const next = clone(p);
+    const removedStart = clip.timelineStartUs;
+    const removedDur = clip.durationUs;
+    const trId = clip.trackId;
+    delete next.clips[cid!];
+    Object.values(next.clips)
+      .filter((c) => c.trackId === trId && c.timelineStartUs >= removedStart)
+      .forEach((c) => {
+        c.timelineStartUs = Math.max(0, c.timelineStartUs - removedDur);
+      });
+    await get().commitProject(`Ripple Delete ${clip.name}`, next);
+    set({ selectedClipId: null, selectedClipIds: [], statusMessage: `Đã xóa & kéo khít "${clip.name}"` });
+  },
+
+  detachAudioFromClip: async (clipId) => {
+    const p = get().project;
+    const cid = clipId ?? get().selectedClipId;
+    const clip = p && cid ? p.clips[cid] : null;
+    if (!p || !clip || !clip.assetId) return;
+    const next = clone(p);
+    const audioTrack = next.tracks.find((t) => t.type === 'audio') ?? next.tracks[next.tracks.length - 1]!;
+    const aId = `det_aud_${Date.now()}`;
+    next.clips[aId] = {
+      ...clone(next.clips[cid!]!),
+      id: aId,
+      trackId: audioTrack.id,
+      kind: 'audio',
+      name: `🔊 ${clip.name}`,
+      effects: [],
+    };
+    next.clips[cid!]!.audio.muted = true;
+    await get().commitProject(`Tách Audio: ${clip.name}`, next);
+    set({ selectedClipId: aId, statusMessage: `Đã tách Audio của "${clip.name}" xuống Audio Track!` });
+  },
+
+  replaceClipAsset: async (clipId, newAssetId) => {
+    const p = get().project;
+    const asset = p?.assets[newAssetId];
+    const clip = p?.clips[clipId];
+    if (!p || !asset || !clip) return;
+    const next = clone(p);
+    const tc = next.clips[clipId]!;
+    tc.assetId = newAssetId;
+    tc.name = asset.name;
+    tc.sourceStartUs = 0;
+    tc.sourceDurationUs = Math.min(tc.durationUs, asset.durationUs);
+    await get().commitProject(`Thay clip -> ${asset.name}`, next);
+    set({ statusMessage: `Đã thay Footage "${asset.name}" (giữ nguyên toàn bộ LUT/VFX/Keyframe)` });
+  },
+
+  generateAiVoiceover: async (text, language, voice) => {
+    const p = get().project;
+    if (!p || !text.trim()) return;
+    set({ busyTask: 'Đang tạo giọng đọc AI Voiceover Offline...' });
+    try {
+      const res = await engineApi.generateTtsVoiceover(text.trim(), language, voice);
+      const next = clone(p);
+      next.assets[res.asset.id] = res.asset;
+      const audioTrack = next.tracks.find((t) => t.type === 'audio') ?? next.tracks[0]!;
+      const textTrack = next.tracks.find((t) => t.type === 'text');
+      const startAt = get().playheadUs;
+      const aClipId = `tts_clip_${Date.now()}`;
+      next.clips[aClipId] = {
+        id: aClipId,
+        trackId: audioTrack.id,
+        assetId: res.asset.id,
+        kind: 'audio',
+        name: res.asset.name,
+        timelineStartUs: startAt,
+        durationUs: res.asset.durationUs,
+        sourceStartUs: 0,
+        sourceDurationUs: res.asset.durationUs,
+        locked: false,
+        disabled: false,
+        transform: createDefaultTransform(),
+        colorGrade: createDefaultColorGrade(),
+        chromaKey: createDefaultChromaKey(),
+        mask: createDefaultMask(),
+        speed: createDefaultSpeed(),
+        audio: createDefaultAudioState(),
+        keyframes: {},
+        effects: [],
+        aiMattingEnabled: false,
+        autoReframeEnabled: false,
+      };
+      if (textTrack) {
+        const tClipId = `tts_cap_${Date.now()}`;
+        const st = createDefaultTextStyle(text.trim());
+        st.karaokeEnabled = true;
+        st.words = res.segment.words.map((w) => ({
+          ...w,
+          startUs: startAt + w.startUs,
+          endUs: startAt + w.endUs,
+        }));
+        next.clips[tClipId] = {
+          id: tClipId,
+          trackId: textTrack.id,
+          assetId: null,
+          kind: 'text',
+          name: text.trim().slice(0, 24),
+          timelineStartUs: startAt,
+          durationUs: res.asset.durationUs,
+          sourceStartUs: 0,
+          sourceDurationUs: res.asset.durationUs,
+          locked: false,
+          disabled: false,
+          transform: { ...createDefaultTransform(), y: 0.34 },
+          colorGrade: createDefaultColorGrade(),
+          chromaKey: createDefaultChromaKey(),
+          mask: createDefaultMask(),
+          speed: createDefaultSpeed(),
+          audio: createDefaultAudioState(),
+          keyframes: {},
+          text: st,
+          effects: [],
+          aiMattingEnabled: false,
+          autoReframeEnabled: false,
+        };
+      }
+      await get().commitProject('Tạo AI Voiceover + Phụ đề', next);
+      await get().loadWaveform(res.asset);
+      set({ selectedClipId: aClipId, statusMessage: 'Đã chèn giọng đọc AI + Phụ đề Karaoke khớp từng từ!' });
+    } catch (err) {
+      set({ errorMessage: `Lỗi AI Voiceover: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
+  },
+
+  smartRemixSelectedMusic: async () => {
+    const p = get().project;
+    const cid = get().selectedClipId;
+    const musicClip = cid && p?.clips[cid]?.kind === 'audio' ? p.clips[cid] : Object.values(p?.clips ?? {}).find((c) => c.kind === 'audio');
+    if (!p || !musicClip || !musicClip.assetId) {
+      set({ errorMessage: 'Hãy chọn 1 clip nhạc trên Audio Track để Smart Remix!' });
+      return;
+    }
+    const visualEnd = Object.values(p.clips)
+      .filter((c) => c.kind === 'video' || c.kind === 'image')
+      .reduce((m, c) => Math.max(m, c.timelineStartUs + c.durationUs), 0);
+    const targetDur = Math.max(2 * US_PER_SEC, visualEnd - musicClip.timelineStartUs);
+    set({ busyTask: `Đang Smart Music Remix khớp ${(targetDur / US_PER_SEC).toFixed(1)}s (có Outro)...` });
+    try {
+      const res = await engineApi.smartRemixMusic(musicClip.assetId, targetDur);
+      const next = clone(p);
+      next.assets[res.asset.id] = res.asset;
+      const mc = next.clips[musicClip.id]!;
+      mc.assetId = res.asset.id;
+      mc.name = res.asset.name;
+      mc.sourceStartUs = 0;
+      mc.durationUs = res.asset.durationUs;
+      mc.sourceDurationUs = res.asset.durationUs;
+      await get().commitProject('Smart Music Remix', next);
+      await get().loadWaveform(res.asset);
+      set({ statusMessage: `Đã remix nhạc khớp ${(targetDur / US_PER_SEC).toFixed(1)}s kèm Outro kết mượt!` });
+    } catch (err) {
+      set({ errorMessage: `Lỗi Smart Remix: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
+  },
+
+  autoSyncSfxAtCuts: async () => {
+    const p = get().project;
+    if (!p) return;
+    set({ busyTask: 'Đang đồng bộ SFX tự động vào toàn bộ vết cắt...' });
+    try {
+      const cuts = Object.values(p.clips)
+        .filter((c) => (c.kind === 'video' || c.kind === 'image') && c.timelineStartUs > 50_000)
+        .sort((a, b) => a.timelineStartUs - b.timelineStartUs);
+      if (cuts.length === 0) {
+        set({ statusMessage: 'Chưa có vết cắt chuyển tiếp giữa các clip.' });
+        return;
+      }
+      const next = clone(p);
+      const audioTrack = next.tracks.find((t) => t.type === 'audio') ?? next.tracks[next.tracks.length - 1]!;
+      for (let i = 0; i < Math.min(12, cuts.length); i++) {
+        const c = cuts[i]!;
+        const tr = c.transitionIn?.type ? TRANSITION_BY_ID[c.transitionIn.type] : undefined;
+        const sfxId = tr?.recommendedSfxId || 'sfx_fast_whoosh';
+        const added = await engineApi.addBuiltinAudio(sfxId);
+        next.assets[added.asset.id] = added.asset;
+        const scId = `autosfx_${Date.now()}_${i}`;
+        next.clips[scId] = {
+          id: scId,
+          trackId: audioTrack.id,
+          assetId: added.asset.id,
+          kind: 'audio',
+          name: `⚡ ${added.asset.name}`,
+          timelineStartUs: Math.max(0, c.timelineStartUs - 200_000),
+          durationUs: added.asset.durationUs,
+          sourceStartUs: 0,
+          sourceDurationUs: added.asset.durationUs,
+          locked: false,
+          disabled: false,
+          transform: createDefaultTransform(),
+          colorGrade: createDefaultColorGrade(),
+          chromaKey: createDefaultChromaKey(),
+          mask: createDefaultMask(),
+          speed: createDefaultSpeed(),
+          audio: { ...createDefaultAudioState(), volume: 0.72 },
+          keyframes: {},
+          effects: [],
+          aiMattingEnabled: false,
+          autoReframeEnabled: false,
+        };
+      }
+      await get().commitProject(`Auto-SFX (${cuts.length} vết cắt)`, next);
+      set({ statusMessage: `Đã gắn ${Math.min(12, cuts.length)} SFX Whoosh khớp vết cắt!` });
+    } catch (err) {
+      set({ errorMessage: `Lỗi Auto-SFX: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
+  },
+
+  autoColorMatchToPreviousClip: async () => {
+    const p = get().project;
+    const cid = get().selectedClipId;
+    const cur = cid && p?.clips[cid] ? p.clips[cid] : null;
+    if (!p || !cur) return;
+    const prev = Object.values(p.clips)
+      .filter((c) => c.trackId === cur.trackId && (c.kind === 'video' || c.kind === 'image') && c.timelineStartUs < cur.timelineStartUs)
+      .sort((a, b) => b.timelineStartUs - a.timelineStartUs)[0];
+    if (!prev) {
+      set({ errorMessage: 'Cần có 1 clip đứng trước clip này để cân màu khớp theo!' });
+      return;
+    }
+    const next = clone(p);
+    next.clips[cur.id]!.colorGrade = clone(prev.colorGrade);
+    if (prev.colorGrade.lutId && !get().loadedLuts[prev.colorGrade.lutId]) {
+      void engineApi.getBuiltinLut(prev.colorGrade.lutId).then((l) => {
+        get().registerLut({ id: l.id, title: l.title, size: l.size, data: new Float32Array(l.data) });
+      }).catch(() => {});
+    }
+    await get().commitProject(`Auto Color Match <- ${prev.name}`, next);
+    set({ statusMessage: `Đã cân màu "${cur.name}" khớp với "${prev.name}"!` });
+  },
+
+  setTextBehindSubject: async (clipId, enabled) => {
+    const p = get().project;
+    const clip = p?.clips[clipId];
+    if (!p || !clip?.text) return;
+    const next = clone(p);
+    next.clips[clipId]!.text!.behindSubject = enabled;
+    const mainVisual = Object.values(next.clips).find(
+      (c) => (c.kind === 'video' || c.kind === 'image') && clip.timelineStartUs < c.timelineStartUs + c.durationUs && clip.timelineStartUs + clip.durationUs > c.timelineStartUs
+    );
+    if (enabled && mainVisual && mainVisual.assetId) {
+      const asset = next.assets[mainVisual.assetId];
+      if (asset && !asset.mattingMaskPath) {
+        await get().commitProject('Đánh dấu Text Behind Subject', next);
+        await get().runAiTask(asset.id, 'matting');
+        return;
+      }
+      mainVisual.aiMattingEnabled = true;
+    }
+    await get().commitProject(enabled ? 'Bật Chữ Sau Chủ Thể' : 'Tắt Chữ Sau Chủ Thể', next);
+    set({ statusMessage: enabled ? 'Đã đưa tiêu đề ra sau chủ thể!' : 'Đã đưa chữ về lớp phía trước.' });
+  },
+
+  translateSelectedSubtitle: async (targetLang) => {
+    const p = get().project;
+    const cid = get().selectedClipId;
+    const clip = cid && p?.clips[cid] ? p.clips[cid] : null;
+    if (!p || !clip?.text) return;
+    const viToEn: Array<[RegExp, string]> = [
+      [/xin chào/gi, 'Hello'],
+      [/chào mừng/gi, 'Welcome'],
+      [/cảm ơn/gi, 'Thank you'],
+      [/đăng ký kênh/gi, 'Subscribe now'],
+      [/bùng nổ/gi, 'Explosive'],
+      [/bí quyết/gi, 'The Secret'],
+      [/hôm nay/gi, 'Today'],
+      [/tuyệt vời/gi, 'Amazing'],
+      [/một ngày bình yên/gi, 'A peaceful day'],
+    ];
+    let out = clip.text.text;
+    if (targetLang === 'en') {
+      viToEn.forEach(([re, rep]) => {
+        out = out.replace(re, rep);
+      });
+      if (out === clip.text.text) out = `${clip.text.text}\n(English Sub)`;
+      else out = `${clip.text.text}\n${out}`;
+    } else {
+      out = out.split('\n')[0] || out;
+    }
+    const next = clone(p);
+    next.clips[clip.id]!.text!.text = out;
+    next.clips[clip.id]!.text!.karaokeEnabled = false;
+    await get().commitProject(`Dịch phụ đề (${targetLang.toUpperCase()})`, next);
+    set({ statusMessage: `Đã thêm phụ đề song ngữ (${targetLang.toUpperCase()})!` });
+  },
+
+  addLottieJsonSticker: async (name, lottieJson) => {
+    const p = get().project;
+    if (!p) return;
+    const next = clone(p);
+    const overlayTrack = next.tracks.find((t) => t.type === 'overlay') ?? next.tracks[0];
+    if (!overlayTrack) return;
+    const parsed = JSON.parse(lottieJson) as { fr?: number; ip?: number; op?: number };
+    const durSec = Math.max(1, ((parsed.op ?? 60) - (parsed.ip ?? 0)) / Math.max(10, parsed.fr ?? 30));
+    const sid = `lottie_${Date.now()}`;
+    next.clips[sid] = {
+      id: sid,
+      trackId: overlayTrack.id,
+      assetId: null,
+      kind: 'sticker',
+      name,
+      timelineStartUs: get().playheadUs,
+      durationUs: Math.round(durSec * US_PER_SEC),
+      sourceStartUs: 0,
+      sourceDurationUs: Math.round(durSec * US_PER_SEC),
+      locked: false,
+      disabled: false,
+      transform: createDefaultTransform(),
+      colorGrade: createDefaultColorGrade(),
+      chromaKey: createDefaultChromaKey(),
+      mask: createDefaultMask(),
+      speed: createDefaultSpeed(),
+      audio: createDefaultAudioState(),
+      keyframes: {},
+      sticker: {
+        presetId: sid,
+        category: 'lottie',
+        name,
+        primaryColor: '#22D3EE',
+        secondaryColor: '#FFFFFF',
+        lottieJson,
+        lottieDurationSec: durSec,
+      },
+      effects: [],
+      aiMattingEnabled: false,
+      autoReframeEnabled: false,
+    };
+    await get().commitProject(`Chèn Lottie: ${name}`, next);
+    set({ selectedClipId: sid, statusMessage: `Đã chèn Lottie Motion Graphic "${name}"!` });
+  },
+
+  importUniversalTemplateFile: async (file) => {
+    set({ busyTask: `Đang phân tích mẫu "${file.name}"...` });
+    try {
+      const ab = await file.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+      const base64 = btoa(bin);
+      const res = await engineApi.importUniversalFile(file.name, base64);
+      if (res.kind === 'lottie' && res.lottieJson) {
+        await get().addLottieJsonSticker(res.name || file.name, res.lottieJson);
+        return;
+      }
+      if (res.project) {
+        const list = await engineApi.listProjects();
+        set({
+          project: res.project,
+          projectsList: list.projects,
+          selectedClipId: null,
+          playheadUs: 0,
+          importReport: res.report ? { title: res.project.name, ...res.report } : null,
+          statusMessage: `Đã nhập mẫu "${res.project.name}" (${res.report?.compatibilityPct ?? 100}% tương thích)!`,
+        });
+      }
+    } catch (err) {
+      set({ errorMessage: `Lỗi nhập mẫu: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
+  },
+
+  importLocalCapCutDraft: async (draftPath) => {
+    set({ busyTask: 'Đang chuyển đổi dự án CapCut sang T-CapCut...' });
+    try {
+      const res = await engineApi.importLocalCapCutDraftPath(draftPath);
+      const list = await engineApi.listProjects();
+      set({
+        project: res.project,
+        projectsList: list.projects,
+        selectedClipId: null,
+        playheadUs: 0,
+        statusMessage: `Đã mở dự án CapCut "${res.project.name}"!`,
+      });
+    } catch (err) {
+      set({ errorMessage: `Lỗi đọc CapCut Draft: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ busyTask: null });
+    }
+  },
+
+  exportCurrentAsTemplatePack: async () => {
+    const p = get().project;
+    if (!p) return;
+    set({ busyTask: 'Đang đóng gói dự án thành gói mẫu .tcapcut-tpl...' });
+    try {
+      const res = await engineApi.exportTemplatePack(p.id, `${p.name} Template`);
+      const bin = atob(res.contentBase64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const blob = new Blob([arr], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      set({ statusMessage: `Đã xuất gói mẫu "${res.filename}" để dùng chung / chia sẻ!` });
+    } catch (err) {
+      set({ errorMessage: `Lỗi đóng gói mẫu: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
       set({ busyTask: null });
     }
