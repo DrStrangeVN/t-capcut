@@ -163,13 +163,33 @@ export function drawTextOverlay2D(
   const padX = Math.max(10, (t.backgroundPadding || 12) * baseScale * 1.2);
   const padY = Math.max(6, (t.backgroundPadding || 12) * baseScale * 0.75);
   const hasBg = Boolean(t.backgroundColor && !t.backgroundColor.endsWith(', 0)') && t.backgroundColor !== 'transparent');
+  const maxContentW = w * 0.86;
+  const lineH = fontSize * (t.lineHeight || 1.28);
 
   if (words) {
     const spaceW = ctx.measureText(' ').width * 1.15;
-    const widths = words.map((wd) => ctx.measureText(wd.text).width);
-    const totalW = widths.reduce((a, b) => a + b, 0) + spaceW * Math.max(0, words.length - 1);
-    const boxW = totalW + padX * 2;
-    const boxH = fontSize * 1.38 + padY * 2;
+    // Wrap karaoke words cleanly into multi-line rows within maxContentW
+    const rows: Array<Array<{ word: (typeof words)[number]; width: number }>> = [];
+    let curRow: Array<{ word: (typeof words)[number]; width: number }> = [];
+    let curRowW = 0;
+    for (const wd of words) {
+      const ww = ctx.measureText(wd.text).width;
+      const nextW = curRow.length === 0 ? ww : curRowW + spaceW + ww;
+      if (curRow.length > 0 && nextW > maxContentW) {
+        rows.push(curRow);
+        curRow = [{ word: wd, width: ww }];
+        curRowW = ww;
+      } else {
+        curRow.push({ word: wd, width: ww });
+        curRowW = nextW;
+      }
+    }
+    if (curRow.length > 0) rows.push(curRow);
+
+    const rowWidths = rows.map((r) => r.reduce((s, x) => s + x.width, 0) + spaceW * Math.max(0, r.length - 1));
+    const maxRowW = Math.max(...rowWidths, 40);
+    const boxW = maxRowW + padX * 2;
+    const boxH = rows.length * lineH + padY * 2;
 
     if (hasBg || preset === 'liquid-glass') {
       ctx.save();
@@ -185,53 +205,58 @@ export function drawTextOverlay2D(
       ctx.restore();
     }
 
-    let cursorX = -totalW * 0.5;
-    words.forEach((wd, i) => {
-      const active = playheadUs >= wd.startUs && playheadUs <= wd.endUs;
-      const past = playheadUs > wd.endUs;
-      const wordW = widths[i]!;
-      const cx = cursorX + wordW * 0.5;
+    const startY = -((rows.length - 1) * lineH) * 0.5;
+    rows.forEach((row, ri) => {
+      const rw = rowWidths[ri]!;
+      const ry = startY + ri * lineH;
+      let cursorX = -rw * 0.5;
 
-      ctx.save();
-      ctx.translate(cx, 0);
+      row.forEach(({ word: wd, width: wordW }) => {
+        const active = playheadUs >= wd.startUs && playheadUs <= wd.endUs;
+        const past = playheadUs > wd.endUs;
+        const cx = cursorX + wordW * 0.5;
 
-      if (active && (preset === 'classic-pill' || preset === 'word-highlight')) {
         ctx.save();
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = t.karaokeActiveColor || '#06B6D4';
-        ctx.beginPath();
-        ctx.roundRect(-wordW * 0.5 - 8 * baseScale, -fontSize * 0.62, wordW + 16 * baseScale, fontSize * 1.24, 10 * baseScale);
-        ctx.fill();
+        ctx.translate(cx, ry);
+
+        if (active && (preset === 'classic-pill' || preset === 'word-highlight')) {
+          ctx.save();
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = t.karaokeActiveColor || '#06B6D4';
+          ctx.beginPath();
+          ctx.roundRect(-wordW * 0.5 - 8 * baseScale, -fontSize * 0.62, wordW + 16 * baseScale, fontSize * 1.24, 10 * baseScale);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        if (active && (preset === 'hormozi-pop' || preset === 'pop-bounce' || preset === 'comic-punch')) {
+          ctx.scale(1.16, 1.16);
+        } else if (active) {
+          ctx.scale(1.06, 1.06);
+        }
+
+        ctx.textAlign = 'center';
+        if (t.strokeWidth > 0) {
+          ctx.strokeStyle = t.strokeColor || '#000000';
+          ctx.lineWidth = Math.max(2, t.strokeWidth * baseScale);
+          ctx.strokeText(wd.text, 0, 0);
+        }
+
+        const useDarkOnActivePill = active && (preset === 'classic-pill' || preset === 'word-highlight');
+        if (preset === 'sweep-fill') {
+          ctx.fillStyle = past || active ? t.karaokeActiveColor : t.color;
+        } else {
+          ctx.fillStyle = useDarkOnActivePill ? '#06111D' : active ? t.karaokeActiveColor : t.color;
+        }
+        ctx.fillText(wd.text, 0, 0);
+
+        if (active && preset === 'capcut-yellow') {
+          ctx.fillStyle = t.karaokeActiveColor || '#FACC15';
+          ctx.fillRect(-wordW * 0.5, fontSize * 0.55, wordW, Math.max(3, 4 * baseScale));
+        }
         ctx.restore();
-      }
-
-      if (active && (preset === 'hormozi-pop' || preset === 'pop-bounce' || preset === 'comic-punch')) {
-        ctx.scale(1.16, 1.16);
-      } else if (active) {
-        ctx.scale(1.06, 1.06);
-      }
-
-      ctx.textAlign = 'center';
-      if (t.strokeWidth > 0) {
-        ctx.strokeStyle = t.strokeColor || '#000000';
-        ctx.lineWidth = Math.max(2, t.strokeWidth * baseScale);
-        ctx.strokeText(wd.text, 0, 0);
-      }
-
-      const useDarkOnActivePill = active && (preset === 'classic-pill' || preset === 'word-highlight');
-      if (preset === 'sweep-fill') {
-        ctx.fillStyle = past || active ? t.karaokeActiveColor : t.color;
-      } else {
-        ctx.fillStyle = useDarkOnActivePill ? '#06111D' : active ? t.karaokeActiveColor : t.color;
-      }
-      ctx.fillText(wd.text, 0, 0);
-
-      if (active && preset === 'capcut-yellow') {
-        ctx.fillStyle = t.karaokeActiveColor || '#FACC15';
-        ctx.fillRect(-wordW * 0.5, fontSize * 0.55, wordW, Math.max(3, 4 * baseScale));
-      }
-      ctx.restore();
-      cursorX += wordW + spaceW;
+        cursorX += wordW + spaceW;
+      });
     });
 
     if (isSelected) {
@@ -244,15 +269,40 @@ export function drawTextOverlay2D(
     return;
   }
 
-  // Non-karaoke Titles, Lower Thirds, Social Cards
+  // Non-karaoke Titles, Lower Thirds, Social Cards with Multi-line Word Wrapping
   const fullStr = t.text;
   const drawnText = anim.typeFrac < 1 ? fullStr.slice(0, Math.max(1, Math.floor(fullStr.length * anim.typeFrac))) : fullStr;
-  const textW = ctx.measureText(fullStr).width;
+  const wrapParagraphs = (raw: string): string[] => {
+    const out: string[] = [];
+    for (const para of raw.split('\n')) {
+      const tokens = para.split(/\s+/).filter(Boolean);
+      if (tokens.length === 0) {
+        out.push('');
+        continue;
+      }
+      let cur = tokens[0]!;
+      for (let i = 1; i < tokens.length; i++) {
+        const candidate = `${cur} ${tokens[i]}`;
+        if (ctx.measureText(candidate).width <= maxContentW) {
+          cur = candidate;
+        } else {
+          out.push(cur);
+          cur = tokens[i]!;
+        }
+      }
+      out.push(cur);
+    }
+    return out.length > 0 ? out : [''];
+  };
+
+  const fullLines = wrapParagraphs(fullStr);
+  const drawnLines = wrapParagraphs(drawnText);
+  const maxTextW = Math.max(...fullLines.map((l) => ctx.measureText(l).width), 40);
   const badgeW = t.badgeText ? ctx.measureText(t.badgeText).width * 0.72 + 24 * baseScale : 0;
   const gapW = t.badgeText ? 12 * baseScale : 0;
-  const totalContentW = textW + badgeW + gapW;
+  const totalContentW = maxTextW + badgeW + gapW;
   const boxW = totalContentW + padX * 2;
-  const boxH = fontSize * 1.38 + padY * 2;
+  const boxH = fullLines.length * lineH + padY * 2;
 
   if (hasBg) {
     ctx.save();
@@ -263,7 +313,7 @@ export function drawTextOverlay2D(
     ctx.restore();
   }
 
-  let textCenterX = badgeW > 0 ? (badgeW + gapW) * 0.5 : 0;
+  const textCenterX = badgeW > 0 ? (badgeW + gapW) * 0.5 : 0;
 
   if (t.badgeText) {
     ctx.save();
@@ -282,13 +332,17 @@ export function drawTextOverlay2D(
   }
 
   ctx.textAlign = 'center';
-  if (t.strokeWidth > 0) {
-    ctx.strokeStyle = t.strokeColor || '#000000';
-    ctx.lineWidth = Math.max(2, t.strokeWidth * baseScale);
-    ctx.strokeText(drawnText, textCenterX, 0);
-  }
-  ctx.fillStyle = t.color;
-  ctx.fillText(drawnText, textCenterX, 0);
+  const startY = -((drawnLines.length - 1) * lineH) * 0.5;
+  drawnLines.forEach((line, li) => {
+    const ly = startY + li * lineH;
+    if (t.strokeWidth > 0) {
+      ctx.strokeStyle = t.strokeColor || '#000000';
+      ctx.lineWidth = Math.max(2, t.strokeWidth * baseScale);
+      ctx.strokeText(line, textCenterX, ly);
+    }
+    ctx.fillStyle = t.color;
+    ctx.fillText(line, textCenterX, ly);
+  });
 
   if (isSelected) {
     ctx.strokeStyle = '#22d3ee';

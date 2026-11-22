@@ -399,7 +399,7 @@ export function applyVideoTemplateToProject(
       sourceDurationUs: srcDur,
       locked: false,
       disabled: false,
-      transform: createDefaultTransform(),
+      transform: { ...createDefaultTransform(), fillMode: 'cover' },
       colorGrade: cg,
       chromaKey: createDefaultChromaKey(),
       mask: createDefaultMask(),

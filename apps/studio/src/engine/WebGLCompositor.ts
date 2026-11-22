@@ -28,6 +28,7 @@ uniform vec2 uTranslate;
 uniform vec2 uScale;
 uniform float uRotationRad;
 uniform vec2 uFlip;
+uniform int uFillMode;
 
 out vec2 vUv;
 out vec2 vScreenUv;
@@ -35,9 +36,9 @@ out vec2 vScreenUv;
 void main() {
   float aspectSrc = uSrcResolution.x / max(1.0, uSrcResolution.y);
   float aspectOut = uResolution.x / max(1.0, uResolution.y);
-  vec2 fit = aspectSrc > aspectOut
-    ? vec2(1.0, aspectOut / aspectSrc)
-    : vec2(aspectSrc / aspectOut, 1.0);
+  vec2 fit = uFillMode == 1
+    ? (aspectSrc > aspectOut ? vec2(aspectSrc / aspectOut, 1.0) : vec2(1.0, aspectOut / aspectSrc))
+    : (aspectSrc > aspectOut ? vec2(1.0, aspectOut / aspectSrc) : vec2(aspectSrc / aspectOut, 1.0));
 
   vec2 local = aPos * fit * uScale * uFlip;
   float c = cos(uRotationRad);
@@ -882,6 +883,7 @@ const MAIN_UNIFORM_NAMES = [
   'uScale',
   'uRotationRad',
   'uFlip',
+  'uFillMode',
 ] as const;
 
 function hexToRgbNorm(hex: string): [number, number, number] {
@@ -1206,7 +1208,8 @@ void main() {
     maskElements: Map<string, HTMLVideoElement>,
     adj?: ColorGradeState,
     targetFbo: WebGLFramebuffer | null = null,
-    forceUpload = false
+    forceUpload = false,
+    bypassGrade = false
   ): boolean {
     if (!clip.assetId) return false;
     const el = mediaElements.get(clip.id) ?? mediaElements.get(clip.assetId);
@@ -1247,7 +1250,7 @@ void main() {
       gl.uniform1i(this.uLoc.uHasMattingMask, 0);
     }
 
-    const lutEntry = clip.colorGrade.lutId ? this.lutTextures.get(clip.colorGrade.lutId) : undefined;
+    const lutEntry = !bypassGrade && clip.colorGrade.lutId ? this.lutTextures.get(clip.colorGrade.lutId) : undefined;
     if (lutEntry) {
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, lutEntry.tex);
@@ -1263,7 +1266,7 @@ void main() {
     gl.bindTexture(gl.TEXTURE_2D, this.backTexture);
     gl.uniform1i(this.uLoc.uBackBuffer, 3);
 
-    const hasCurves = this.uploadCurves(clip.colorGrade.curves);
+    const hasCurves = bypassGrade ? false : this.uploadCurves(clip.colorGrade.curves);
     gl.uniform1i(this.uLoc.uCurvesTexture, 4);
     gl.uniform1i(this.uLoc.uHasCurves, hasCurves ? 1 : 0);
 
@@ -1281,6 +1284,7 @@ void main() {
     gl.uniform2f(this.uLoc.uScale, scaleX, scaleY);
     gl.uniform1f(this.uLoc.uRotationRad, (rot * Math.PI) / 180);
     gl.uniform2f(this.uLoc.uFlip, clip.transform.flipH ? -1 : 1, clip.transform.flipV ? -1 : 1);
+    gl.uniform1i(this.uLoc.uFillMode, clip.transform.fillMode === 'cover' ? 1 : 0);
     gl.uniform1f(this.uLoc.uOpacity, opacity);
     gl.uniform4f(
       this.uLoc.uCrop,
@@ -1292,30 +1296,46 @@ void main() {
     gl.uniform1i(this.uLoc.uBlendMode, targetFbo === null ? BLEND_MODE_INDEX[clip.transform.blendMode] ?? 0 : 0);
 
     const cg = clip.colorGrade;
-    gl.uniform1f(this.uLoc.uExposure, cg.exposure + (adj?.exposure ?? 0));
-    gl.uniform1f(this.uLoc.uBrightness, getClipPropertyAtTime(clip, 'brightness', localUs) + (adj?.brightness ?? 0));
-    gl.uniform1f(this.uLoc.uContrast, getClipPropertyAtTime(clip, 'contrast', localUs) + (adj?.contrast ?? 0));
-    gl.uniform1f(this.uLoc.uSaturation, getClipPropertyAtTime(clip, 'saturation', localUs) + (adj?.saturation ?? 0));
-    gl.uniform1f(this.uLoc.uVibrance, cg.vibrance + (adj?.vibrance ?? 0));
-    gl.uniform1f(this.uLoc.uTemperature, cg.temperature + (adj?.temperature ?? 0));
-    gl.uniform1f(this.uLoc.uTint, cg.tint + (adj?.tint ?? 0));
-    gl.uniform1f(this.uLoc.uVignette, Math.max(cg.vignette, adj?.vignette ?? 0));
-    gl.uniform1f(this.uLoc.uSharpness, Math.max(cg.sharpness, adj?.sharpness ?? 0));
-    gl.uniform3fv(this.uLoc.uLift, cg.wheels.lift);
-    gl.uniform3fv(this.uLoc.uGamma, cg.wheels.gamma);
-    gl.uniform3fv(this.uLoc.uGain, cg.wheels.gain);
+    if (bypassGrade) {
+      gl.uniform1f(this.uLoc.uExposure, 0);
+      gl.uniform1f(this.uLoc.uBrightness, 0);
+      gl.uniform1f(this.uLoc.uContrast, 0);
+      gl.uniform1f(this.uLoc.uSaturation, 0);
+      gl.uniform1f(this.uLoc.uVibrance, 0);
+      gl.uniform1f(this.uLoc.uTemperature, 0);
+      gl.uniform1f(this.uLoc.uTint, 0);
+      gl.uniform1f(this.uLoc.uVignette, 0);
+      gl.uniform1f(this.uLoc.uSharpness, 0);
+      gl.uniform3fv(this.uLoc.uLift, [0, 0, 0]);
+      gl.uniform3fv(this.uLoc.uGamma, [0, 0, 0]);
+      gl.uniform3fv(this.uLoc.uGain, [0, 0, 0]);
+      gl.uniform1i(this.uLoc.uHasHsl, 0);
+    } else {
+      gl.uniform1f(this.uLoc.uExposure, cg.exposure + (adj?.exposure ?? 0));
+      gl.uniform1f(this.uLoc.uBrightness, getClipPropertyAtTime(clip, 'brightness', localUs) + (adj?.brightness ?? 0));
+      gl.uniform1f(this.uLoc.uContrast, getClipPropertyAtTime(clip, 'contrast', localUs) + (adj?.contrast ?? 0));
+      gl.uniform1f(this.uLoc.uSaturation, getClipPropertyAtTime(clip, 'saturation', localUs) + (adj?.saturation ?? 0));
+      gl.uniform1f(this.uLoc.uVibrance, cg.vibrance + (adj?.vibrance ?? 0));
+      gl.uniform1f(this.uLoc.uTemperature, cg.temperature + (adj?.temperature ?? 0));
+      gl.uniform1f(this.uLoc.uTint, cg.tint + (adj?.tint ?? 0));
+      gl.uniform1f(this.uLoc.uVignette, Math.max(cg.vignette, adj?.vignette ?? 0));
+      gl.uniform1f(this.uLoc.uSharpness, Math.max(cg.sharpness, adj?.sharpness ?? 0));
+      gl.uniform3fv(this.uLoc.uLift, cg.wheels.lift);
+      gl.uniform3fv(this.uLoc.uGamma, cg.wheels.gamma);
+      gl.uniform3fv(this.uLoc.uGain, cg.wheels.gain);
 
-    const hslArr = new Float32Array(24);
-    let anyHsl = false;
-    HSL_KEYS.forEach((k, idx) => {
-      const entry = cg.hsl[k];
-      if (entry && (entry.hue !== 0 || entry.sat !== 0 || entry.lum !== 0)) anyHsl = true;
-      hslArr[idx * 3] = entry?.hue ?? 0;
-      hslArr[idx * 3 + 1] = entry?.sat ?? 0;
-      hslArr[idx * 3 + 2] = entry?.lum ?? 0;
-    });
-    gl.uniform1i(this.uLoc.uHasHsl, anyHsl ? 1 : 0);
-    gl.uniform3fv(this.uLoc['uHsl[0]'], hslArr);
+      const hslArr = new Float32Array(24);
+      let anyHsl = false;
+      HSL_KEYS.forEach((k, idx) => {
+        const entry = cg.hsl[k];
+        if (entry && (entry.hue !== 0 || entry.sat !== 0 || entry.lum !== 0)) anyHsl = true;
+        hslArr[idx * 3] = entry?.hue ?? 0;
+        hslArr[idx * 3 + 1] = entry?.sat ?? 0;
+        hslArr[idx * 3 + 2] = entry?.lum ?? 0;
+      });
+      gl.uniform1i(this.uLoc.uHasHsl, anyHsl ? 1 : 0);
+      gl.uniform3fv(this.uLoc['uHsl[0]'], hslArr);
+    }
 
     gl.uniform1i(this.uLoc.uChromaEnabled, clip.chromaKey.enabled ? 1 : 0);
     const ckRgb = hexToRgbNorm(clip.chromaKey.colorHex);
@@ -1412,7 +1432,7 @@ void main() {
     playheadUs: Microseconds,
     mediaElements: Map<string, HTMLVideoElement | HTMLImageElement>,
     maskElements: Map<string, HTMLVideoElement>,
-    options?: { nestedScopeId?: string | null; forceUpload?: boolean; skipGlow?: boolean }
+    options?: { nestedScopeId?: string | null; forceUpload?: boolean; skipGlow?: boolean; compareSplitX?: number | null }
   ): string | null {
     const gl = this.gl;
     const w = project.settings.width;
@@ -1450,6 +1470,23 @@ void main() {
 
     gl.bindVertexArray(this.vao);
 
+    const splitPx =
+      options?.compareSplitX != null
+        ? Math.max(1, Math.min(w - 1, Math.round(options.compareSplitX * w)))
+        : null;
+
+    if (splitPx !== null) {
+      // Left side: Raw Original (bypass Grade + LUT + VFX Stack)
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(0, 0, splitPx, h);
+      for (const clip of activeVisualClips) {
+        const localUs = playheadUs - clip.timelineStartUs;
+        this.drawGradedBaseClip(clip, localUs, w, h, mediaElements, maskElements, undefined, null, options?.forceUpload, true);
+      }
+      // Right side: Graded + LUT + Multi-FX GPU + Transitions
+      gl.scissor(splitPx, 0, w - splitPx, h);
+    }
+
     for (const clip of activeVisualClips) {
       const localUs = playheadUs - clip.timelineStartUs;
       const trans = clip.transitionIn && clip.transitionIn.type !== 'none' && localUs < clip.transitionIn.durationUs
@@ -1459,11 +1496,16 @@ void main() {
       const needsClipOffscreen = Boolean(trans) || clipVfx.length > 0;
 
       if (!needsClipOffscreen) {
+        if (splitPx !== null) {
+          gl.enable(gl.SCISSOR_TEST);
+          gl.scissor(splitPx, 0, w - splitPx, h);
+        }
         this.drawGradedBaseClip(clip, localUs, w, h, mediaElements, maskElements, globalAdj, null, options?.forceUpload);
         continue;
       }
 
-      // Render incoming clip into fxFboA, then run per-clip VFX stack
+      // Render incoming clip into fxFboA WITHOUT scissor so edge convolutions (Blur/Halation) sample cleanly
+      if (splitPx !== null) gl.disable(gl.SCISSOR_TEST);
       const drawn = this.drawGradedBaseClip(
         clip,
         localUs,
@@ -1480,7 +1522,6 @@ void main() {
       const incomingTex = clipVfx.length > 0 ? this.runVfxStack(clipVfx, timeSec, w, h) : this.fxTexA;
 
       if (trans) {
-        // Locate outgoing clip on the same track right before this clip cut (within ±80ms)
         const outgoingClip = flatClips
           .filter(
             (other) =>
@@ -1511,9 +1552,13 @@ void main() {
         }
 
         const transDef = TRANSITION_BY_ID[trans.type];
-        const transIdx = transDef ? transDef.transIndex : 8; // fallback dissolve
+        const transIdx = transDef ? transDef.transIndex : 8;
         const progress = Math.min(1, Math.max(0, localUs / Math.max(1, trans.durationUs)));
 
+        if (splitPx !== null) {
+          gl.enable(gl.SCISSOR_TEST);
+          gl.scissor(splitPx, 0, w - splitPx, h);
+        }
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, w, h);
         gl.useProgram(this.transitionProgram);
@@ -1528,6 +1573,10 @@ void main() {
         gl.uniform2f(this.transLoc.uResolution, w, h);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       } else {
+        if (splitPx !== null) {
+          gl.enable(gl.SCISSOR_TEST);
+          gl.scissor(splitPx, 0, w - splitPx, h);
+        }
         this.blitTextureToTarget(incomingTex, null, w, h);
       }
     }
@@ -1535,13 +1584,19 @@ void main() {
     // Apply timeline-wide Adjustment / Effect Track VFX stacks over the composited frame
     const activeGlobalVfx = globalVfxStack.filter((e) => e.enabled !== false);
     if (activeGlobalVfx.length > 0 && activeVisualClips.length > 0) {
+      if (splitPx !== null) gl.disable(gl.SCISSOR_TEST);
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.fxFboA);
       gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
       const finalGlobalTex = this.runVfxStack(activeGlobalVfx, timeSec, w, h);
+      if (splitPx !== null) {
+        gl.enable(gl.SCISSOR_TEST);
+        gl.scissor(splitPx, 0, w - splitPx, h);
+      }
       this.blitTextureToTarget(finalGlobalTex, null, w, h);
     }
 
+    gl.disable(gl.SCISSOR_TEST);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindVertexArray(null);
 

@@ -127,6 +127,8 @@ interface EditorState {
     luts?: Array<{ id?: string; filename?: string; content: string }>;
     audioFiles?: Array<{ filename: string; base64: string }>;
   }) => Promise<void>;
+  autoCutSelectedClipToBeats: () => Promise<void>;
+  applyClipColorAndFxToAll: (kind: 'color' | 'fx') => Promise<void>;
   updateSelectedClip: (label: string, updater: (clip: Clip) => void) => Promise<void>;
   addKeyframeAtPlayhead: (prop: AnimatableProperty, value: number) => Promise<void>;
   moveKeyframeTime: (clipId: string, oldTimeUs: Microseconds, newTimeUs: Microseconds) => Promise<void>;
@@ -1070,6 +1072,79 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     } finally {
       set({ busyTask: null });
     }
+  },
+
+  autoCutSelectedClipToBeats: async () => {
+    const p = get().project;
+    const cid = get().selectedClipId;
+    if (!p || !cid) return;
+    const next = clone(p);
+    const scope = getActiveScopeMutable(next, get().nestedScopeId);
+    const clip = scope.clips[cid];
+    if (!clip) return;
+
+    const beatTimes = next.markers
+      .filter((m) => m.kind === 'beat' && m.timeUs > clip.timelineStartUs + 150_000 && m.timeUs < clip.timelineStartUs + clip.durationUs - 150_000)
+      .map((m) => m.timeUs)
+      .sort((a, b) => a - b);
+
+    if (beatTimes.length === 0) {
+      set({ errorMessage: 'Chưa có Beat Marker nằm trên clip này. Hãy thêm Nhạc nền hoặc chạy Auto Beat Markers trước!' });
+      return;
+    }
+
+    // Deduplicate cuts closer than 250ms and split clip into beat-synced segments
+    const cuts: number[] = [];
+    for (const bt of beatTimes) {
+      if (cuts.length === 0 || bt - cuts[cuts.length - 1]! >= 250_000) cuts.push(bt);
+    }
+
+    delete scope.clips[clip.id];
+    const points = [clip.timelineStartUs, ...cuts, clip.timelineStartUs + clip.durationUs];
+    const createdIds: string[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const sUs = points[i]!;
+      const eUs = points[i + 1]!;
+      const segDur = eUs - sUs;
+      const offsetUs = sUs - clip.timelineStartUs;
+      const segId = i === 0 ? clip.id : `${clip.id}_b${i}_${Math.random().toString(36).slice(2, 5)}`;
+      const seg: Clip = clone(clip);
+      seg.id = segId;
+      seg.name = `${clip.name} · B${i + 1}`;
+      seg.timelineStartUs = sUs;
+      seg.durationUs = segDur;
+      seg.sourceStartUs = clip.sourceStartUs + Math.round(offsetUs * (clip.speed.rate || 1));
+      seg.sourceDurationUs = Math.round(segDur * (clip.speed.rate || 1));
+      seg.transitionIn = i === 0 ? clip.transitionIn : null;
+      scope.clips[segId] = seg;
+      createdIds.push(segId);
+    }
+    await get().commitProject(`⚡ Beat-Cut thành ${createdIds.length} đoạn`, next);
+    set({ selectedClipId: createdIds[0]!, selectedClipIds: createdIds, statusMessage: `Đã tự động cắt thành ${createdIds.length} đoạn khớp nhịp Beat!` });
+  },
+
+  applyClipColorAndFxToAll: async (kind) => {
+    const p = get().project;
+    const cid = get().selectedClipId;
+    if (!p || !cid) return;
+    const next = clone(p);
+    const scope = getActiveScopeMutable(next, get().nestedScopeId);
+    const src = scope.clips[cid];
+    if (!src) return;
+    let count = 0;
+    Object.values(scope.clips).forEach((c) => {
+      if (c.id !== src.id && (c.kind === 'video' || c.kind === 'image')) {
+        if (kind === 'color') c.colorGrade = clone(src.colorGrade);
+        else c.effects = clone(src.effects).map((fx, idx) => ({ ...fx, id: `${fx.id}_cp_${count}_${idx}` }));
+        count += 1;
+      }
+    });
+    if (count === 0) {
+      set({ statusMessage: 'Không có clip video/ảnh nào khác để sao chép.' });
+      return;
+    }
+    await get().commitProject(kind === 'color' ? `Đồng bộ Màu/LUT cho ${count} clip` : `Đồng bộ Multi-FX cho ${count} clip`, next);
+    set({ statusMessage: `Đã áp dụng ${kind === 'color' ? 'Màu/LUT' : 'VFX Stack'} cho ${count} clip khác!` });
   },
 
   updateSelectedClip: async (label, updater) => {

@@ -459,6 +459,7 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
               <button
                 className={`glass-btn ${audioSubTab === 'music' ? 'glass-btn-active' : ''}`}
+                style={{ fontSize: 11, whiteSpace: 'nowrap', padding: '7px 6px' }}
                 onClick={() => {
                   setAudioSubTab('music');
                   setAudioCat('all');
@@ -468,12 +469,13 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
               </button>
               <button
                 className={`glass-btn ${audioSubTab === 'sfx' ? 'glass-btn-active' : ''}`}
+                style={{ fontSize: 11, whiteSpace: 'nowrap', padding: '7px 6px' }}
                 onClick={() => {
                   setAudioSubTab('sfx');
                   setAudioCat('all');
                 }}
               >
-                🔊 Hiệu Ứng SFX (40)
+                🔊 Bộ SFX (40)
               </button>
             </div>
 
@@ -518,7 +520,7 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
                     <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
                       {item.bpm > 0 && (
-                        <span className="mono" style={{ fontSize: 9.5, color: '#facc15', background: 'rgba(250,204,21,0.12)', padding: '1px 5px', borderRadius: 4 }}>
+                        <span className="mono" style={{ fontSize: 9.5, color: '#facc15', background: 'rgba(250,204,21,0.14)', padding: '1px 6px', borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap' }}>
                           {item.bpm} BPM
                         </span>
                       )}

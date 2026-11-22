@@ -116,6 +116,7 @@ export interface TransformState {
   cropTop: number;
   cropBottom: number;
   blendMode: BlendMode;
+  fillMode?: 'fit' | 'cover';
 }
 
 export interface ColorWheelValues {

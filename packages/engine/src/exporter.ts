@@ -638,7 +638,11 @@ export async function exportProject(
 
     const scaledW = Math.max(2, Math.round(outW * clip.transform.scaleX) & ~1);
     const scaledH = Math.max(2, Math.round(outH * clip.transform.scaleY) & ~1);
-    vFilters.push(`scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${scaledW}:${scaledH}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=yuva420p`);
+    if (clip.transform.fillMode === 'cover') {
+      vFilters.push(`scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${scaledW}:${scaledH},format=yuva420p`);
+    } else {
+      vFilters.push(`scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${scaledW}:${scaledH}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=yuva420p`);
+    }
 
     // Rotation
     if (Math.abs(clip.transform.rotation) > 0.1) {

@@ -38,7 +38,7 @@ import { useEditorStore } from '../store/useEditorStore';
 
 const RULER_H = 26;
 const TRACK_H = 44;
-const HEADER_W = 196;
+const HEADER_W = 212;
 
 const CLIP_THEME: Record<Clip['kind'], { fill: string; border: string; accent: string }> = {
   video: { fill: 'rgba(14, 116, 144, 0.52)', border: 'rgba(34, 211, 238, 0.55)', accent: '#22d3ee' },
@@ -119,6 +119,7 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
   const addVfxPreset = useEditorStore((s) => s.addVfxPreset);
   const addTextPresetClip = useEditorStore((s) => s.addTextPresetClip);
   const setClipTransition = useEditorStore((s) => s.setClipTransition);
+  const autoCutSelectedClipToBeats = useEditorStore((s) => s.autoCutSelectedClipToBeats);
 
   const [addTrackMenu, setAddTrackMenu] = useState(false);
   const [quickTransMenu, setQuickTransMenu] = useState<{ clipId: string; x: number; y: number } | null>(null);
@@ -280,13 +281,17 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
         ctx.fillStyle = grad;
         ctx.fillRect(x, cy, cw, 12);
 
-        // Clip label badge
+        // Clip label badge (shifts right cleanly when a cut-transition badge sits on its left seam)
+        const hasLeftCutSeam = trackClips.some(
+          (prev) => prev.id !== clip.id && Math.abs(prev.timelineStartUs + prev.durationUs - clip.timelineStartUs) <= 80_000
+        );
+        const badgeOffset = hasLeftCutSeam ? 13 : 4;
         const badgeText = clip.kind === 'compound' ? `[Compound] ${clip.name}` : clip.name;
         ctx.font = '600 10.5px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.fillStyle = 'rgba(6, 10, 18, 0.68)';
-        ctx.fillRect(x + 4, cy + 3, Math.min(cw - 8, ctx.measureText(badgeText).width + 12), 16);
+        ctx.fillStyle = 'rgba(6, 10, 18, 0.72)';
+        ctx.fillRect(x + badgeOffset, cy + 3, Math.min(cw - badgeOffset - 4, ctx.measureText(badgeText).width + 10), 16);
         ctx.fillStyle = '#f8fafc';
-        ctx.fillText(badgeText, x + 9, cy + 14.5, Math.max(10, cw - 16));
+        ctx.fillText(badgeText, x + badgeOffset + 5, cy + 14.5, Math.max(10, cw - badgeOffset - 10));
 
         // Interactive Keyframe Diamonds
         const allKfTimes = new Set<number>();
@@ -822,6 +827,14 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
           <button className="glass-btn" onClick={() => void splitClipAtPlayhead()} title="Cắt đôi clip (Cmd+B)">
             Split
           </button>
+          <button
+            className="glass-btn"
+            onClick={() => void autoCutSelectedClipToBeats()}
+            disabled={!selectedClipId}
+            title="⚡ Tự động cắt clip đang chọn khớp theo toàn bộ Beat Markers"
+          >
+            ⚡ Beat-Cut
+          </button>
           <button className="glass-btn" onClick={() => void duplicateSelectedClip()} disabled={!selectedClipId} title="Nhân bản (hoặc Option+Drag)">
             <Copy size={13} />
           </button>
@@ -923,7 +936,7 @@ export const TimelineCanvas: React.FC<TimelineCanvasProps> = ({ heightPx = 310 }
                 fontSize: 11,
               }}
             >
-              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 82 }}>
+              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 96 }}>
                 <div style={{ fontWeight: 600, color: tr.isMain ? '#22d3ee' : '#e2e8f0' }}>{tr.name}</div>
                 <div style={{ fontSize: 9.5, color: 'var(--text-secondary)' }}>{tr.type}</div>
               </div>

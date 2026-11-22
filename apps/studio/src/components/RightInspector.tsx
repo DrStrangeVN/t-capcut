@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Diamond, FlipHorizontal, FlipVertical, Gauge, Palette, Pipette, Scissors, Sliders, Sparkles, Trash2, Volume2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, CopyCheck, Diamond, FlipHorizontal, FlipVertical, Gauge, Maximize, Palette, Pipette, RotateCcw, Scissors, Sliders, Sparkles, Trash2, Volume2 } from 'lucide-react';
 import {
   EASING_PRESETS,
   computeDurationFromSpeed,
@@ -70,6 +70,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
   const commitCurrentProject = useEditorStore((s) => s.commitCurrentProject);
   const updateSelectedClip = useEditorStore((s) => s.updateSelectedClip);
   const addKeyframeAtPlayhead = useEditorStore((s) => s.addKeyframeAtPlayhead);
+  const applyClipColorAndFxToAll = useEditorStore((s) => s.applyClipColorAndFxToAll);
 
   const [curveChannel, setCurveChannel] = useState<'master' | 'red' | 'green' | 'blue'>('master');
   const [hslChannel, setHslChannel] = useState<string>('red');
@@ -351,6 +352,14 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <Sparkles size={12} /> Multi-FX GPU Stack ({clip.effects.length})
                   </span>
+                  <button
+                    className="glass-btn"
+                    style={{ fontSize: 10, padding: '2px 7px' }}
+                    onClick={() => void applyClipColorAndFxToAll('fx')}
+                    title="Sao chép chuỗi hiệu ứng sang tất cả clip Video/Ảnh"
+                  >
+                    <CopyCheck size={11} /> Áp All
+                  </button>
                 </div>
                 {clip.effects.map((fx, fxIdx) => (
                   <div key={fx.id} style={{ padding: 7, borderRadius: 8, background: 'rgba(0,0,0,0.28)', display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -368,18 +377,52 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
                         />
                         <span>{fx.name}</span>
                       </label>
-                      <button
-                        className="glass-btn"
-                        style={{ padding: '2px 5px' }}
-                        onClick={() =>
-                          void updateSelectedClip(`Xóa VFX ${fx.name}`, (c) => {
-                            c.effects.splice(fxIdx, 1);
-                          })
-                        }
-                        title="Xóa FX khỏi stack"
-                      >
-                        <Trash2 size={11} color="#fb7185" />
-                      </button>
+                      <div style={{ display: 'flex', gap: 3 }}>
+                        <button
+                          className="glass-btn"
+                          style={{ padding: '2px 4px' }}
+                          disabled={fxIdx === 0}
+                          onClick={() =>
+                            void updateSelectedClip(`Đưa ${fx.name} lên`, (c) => {
+                              if (fxIdx > 0) {
+                                const [moved] = c.effects.splice(fxIdx, 1);
+                                c.effects.splice(fxIdx - 1, 0, moved!);
+                              }
+                            })
+                          }
+                          title="Đưa lên trước"
+                        >
+                          <ArrowUp size={10} />
+                        </button>
+                        <button
+                          className="glass-btn"
+                          style={{ padding: '2px 4px' }}
+                          disabled={fxIdx === clip.effects.length - 1}
+                          onClick={() =>
+                            void updateSelectedClip(`Đưa ${fx.name} xuống`, (c) => {
+                              if (fxIdx < c.effects.length - 1) {
+                                const [moved] = c.effects.splice(fxIdx, 1);
+                                c.effects.splice(fxIdx + 1, 0, moved!);
+                              }
+                            })
+                          }
+                          title="Đưa xuống sau"
+                        >
+                          <ArrowDown size={10} />
+                        </button>
+                        <button
+                          className="glass-btn"
+                          style={{ padding: '2px 5px' }}
+                          onClick={() =>
+                            void updateSelectedClip(`Xóa VFX ${fx.name}`, (c) => {
+                              c.effects.splice(fxIdx, 1);
+                            })
+                          }
+                          title="Xóa FX khỏi stack"
+                        >
+                          <Trash2 size={11} color="#fb7185" />
+                        </button>
+                      </div>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-secondary)' }}>
                       <span>Cường độ: {(fx.intensity * 100).toFixed(0)}%</span>
@@ -490,6 +533,23 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
                   >
                     <FlipVertical size={13} /> Flip Dọc
                   </button>
+                  {(clip.kind === 'video' || clip.kind === 'image') && (
+                    <button
+                      className={`glass-btn ${clip.transform.fillMode === 'cover' ? 'glass-btn-active' : ''}`}
+                      style={{ gridColumn: '1 / -1' }}
+                      onClick={() =>
+                        void updateSelectedClip(
+                          clip.transform.fillMode === 'cover' ? 'Vừa Khung (Fit)' : 'Lấp Đầy Khung (Cover)',
+                          (c) => {
+                            c.transform.fillMode = c.transform.fillMode === 'cover' ? 'fit' : 'cover';
+                          }
+                        )
+                      }
+                    >
+                      <Maximize size={13} color={clip.transform.fillMode === 'cover' ? '#22d3ee' : undefined} />
+                      <span>{clip.transform.fillMode === 'cover' ? 'Đang bật: Lấp Đầy Khung (Cover)' : 'Mặc định: Vừa Khung (Fit)'}</span>
+                    </button>
+                  )}
                 </div>
 
                 {/* Crop 4 Edges */}
@@ -602,6 +662,38 @@ export const RightInspector: React.FC<RightInspectorProps> = ({ widthPx = 348 })
 
             {inspectorTab === 'color' && (
               <>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  <button className="glass-btn" style={{ fontSize: 10.5 }} onClick={() => void applyClipColorAndFxToAll('color')}>
+                    <CopyCheck size={12} color="#22d3ee" /> Áp Màu/LUT All
+                  </button>
+                  <button
+                    className="glass-btn"
+                    style={{ fontSize: 10.5 }}
+                    onClick={() =>
+                      void updateSelectedClip('Reset Màu & LUT', (c) => {
+                        c.colorGrade.exposure = 0;
+                        c.colorGrade.brightness = 0;
+                        c.colorGrade.contrast = 0;
+                        c.colorGrade.saturation = 0;
+                        c.colorGrade.vibrance = 0;
+                        c.colorGrade.temperature = 0;
+                        c.colorGrade.tint = 0;
+                        c.colorGrade.sharpness = 0;
+                        c.colorGrade.vignette = 0;
+                        c.colorGrade.lutId = null;
+                        c.colorGrade.lutName = null;
+                      })
+                    }
+                  >
+                    <RotateCcw size={12} color="#fb7185" /> Reset Màu/LUT
+                  </button>
+                </div>
+                {clip.colorGrade.lutName && (
+                  <div className="mono" style={{ padding: '6px 9px', borderRadius: 8, background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.35)', fontSize: 10.5, color: '#67e8f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>LUT: {clip.colorGrade.lutName}</span>
+                    <span>{Math.round(clip.colorGrade.lutIntensity * 100)}%</span>
+                  </div>
+                )}
                 {(
                   [
                     { label: 'Phơi sáng (Exposure)', key: 'exposure', min: -1, max: 1 },

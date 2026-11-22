@@ -4,6 +4,7 @@ import {
   Crop,
   Eye,
   Film,
+  Maximize,
   Maximize2,
   Pause,
   Pipette,
@@ -13,6 +14,7 @@ import {
   SkipBack,
   SkipForward,
   Sparkles,
+  SplitSquareHorizontal,
   Trash2,
 } from 'lucide-react';
 import {
@@ -65,6 +67,9 @@ type GizmoDragState =
       centerClientY: number;
       startAngle: number;
       origRotation: number;
+    }
+  | {
+      kind: 'compare';
     };
 
 export const PlayerViewport: React.FC = () => {
@@ -113,6 +118,14 @@ export const PlayerViewport: React.FC = () => {
   const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
 
   const [snapAxes, setSnapAxes] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareSplitX, setCompareSplitX] = useState(0.5);
+  const compareStateRef = useRef<{ active: boolean; splitX: number }>({ active: false, splitX: 0.5 });
+  const [inlineTextEdit, setInlineTextEdit] = useState<{ clipId: string; value: string } | null>(null);
+
+  useEffect(() => {
+    compareStateRef.current = { active: compareMode, splitX: compareSplitX };
+  }, [compareMode, compareSplitX]);
 
   // Initialize WebGL2 Compositor + WebAudio Graph + dispose on unmount
   useEffect(() => {
@@ -363,11 +376,15 @@ export const PlayerViewport: React.FC = () => {
 
       // Dirty-frame check: skip GPU pass if paused and project+playhead+media unchanged
       const comp = compositorRef.current;
-      const renderKey = `${project.updatedAt}:${curUs}:${nestedScopeId ?? ''}:${JSON.stringify(project.clips).length}`;
+      const cmp = compareStateRef.current;
+      const renderKey = `${project.updatedAt}:${curUs}:${nestedScopeId ?? ''}:${cmp.active ? cmp.splitX.toFixed(3) : 'off'}:${JSON.stringify(project.clips).length}`;
       if (comp && (playing || renderKey !== lastRenderKey || activeClips.some((c) => c.kind === 'video'))) {
         lastRenderKey = renderKey;
         const tStart = performance.now();
-        const glow = comp.renderFrame(project, curUs, mediaElementsRef.current, maskElementsRef.current, { nestedScopeId });
+        const glow = comp.renderFrame(project, curUs, mediaElementsRef.current, maskElementsRef.current, {
+          nestedScopeId,
+          compareSplitX: cmp.active ? cmp.splitX : null,
+        });
         const costMs = Math.round((performance.now() - tStart) * 10) / 10;
         if (renderMsRef.current && now - lastMsTextUpdate > 140) {
           lastMsTextUpdate = now;
@@ -524,6 +541,11 @@ export const PlayerViewport: React.FC = () => {
       previewSelectedClip((c) => {
         c.transform.rotation = nextRot;
       });
+    } else if (drag.kind === 'compare') {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const nx = Math.min(0.95, Math.max(0.05, (e.clientX - rect.left) / Math.max(1, rect.width)));
+      setCompareSplitX(nx);
+      compareStateRef.current.splitX = nx;
     }
   };
 
@@ -533,15 +555,35 @@ export const PlayerViewport: React.FC = () => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
+    const wasCompare = drag.kind === 'compare';
     dragRef.current = null;
     setSnapAxes({ x: false, y: false });
-    void commitCurrentProject(`Viewport Gizmo (${drag.kind})`);
+    if (!wasCompare) {
+      void commitCurrentProject(`Viewport Gizmo (${drag.kind})`);
+    }
+  };
+
+  const handleStageDoubleClick = () => {
+    if (!project) return;
+    const curUs = playbackClock.getTimeUs();
+    const activeText = Object.values(project.clips).find(
+      (c) => c.kind === 'text' && c.text && !c.disabled && curUs >= c.timelineStartUs && curUs < c.timelineStartUs + c.durationUs
+    );
+    const target = selectedClip?.kind === 'text' && selectedClip.text ? selectedClip : activeText;
+    if (target?.text) {
+      setSelectedClipId(target.id);
+      setInlineTextEdit({ clipId: target.id, value: target.text.text });
+    }
   };
 
   const curTimeForGizmo = playbackClock.getTimeUs();
   const showGizmo =
     selectedClip &&
-    (selectedClip.kind === 'video' || selectedClip.kind === 'image' || selectedClip.kind === 'compound') &&
+    (selectedClip.kind === 'video' ||
+      selectedClip.kind === 'image' ||
+      selectedClip.kind === 'compound' ||
+      selectedClip.kind === 'text' ||
+      (selectedClip.kind === 'sticker' && !selectedClip.sticker?.particleType)) &&
     curTimeForGizmo >= selectedClip.timelineStartUs &&
     curTimeForGizmo < selectedClip.timelineStartUs + selectedClip.durationUs;
 
@@ -579,6 +621,31 @@ export const PlayerViewport: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {selectedClip && (selectedClip.kind === 'video' || selectedClip.kind === 'image') && (
+            <button
+              className={`glass-btn ${selectedClip.transform.fillMode === 'cover' ? 'glass-btn-active' : ''}`}
+              style={{ padding: '4px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
+              onClick={() =>
+                void updateSelectedClip(
+                  selectedClip.transform.fillMode === 'cover' ? 'Fit Khung Hình' : 'Fill Đầy Khung (Cover)',
+                  (c) => {
+                    c.transform.fillMode = c.transform.fillMode === 'cover' ? 'fit' : 'cover';
+                  }
+                )
+              }
+              title="Bật/tắt Fill đầy khung (loại bỏ viền đen khi khung dọc/ngang lệch nhau)"
+            >
+              <Maximize size={12} /> {selectedClip.transform.fillMode === 'cover' ? 'Cover' : 'Fit'}
+            </button>
+          )}
+          <button
+            className={`glass-btn ${compareMode ? 'glass-btn-active' : ''}`}
+            style={{ padding: '4px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
+            onClick={() => setCompareMode(!compareMode)}
+            title="So sánh Before/After (Gốc ↔ LUT + Multi-FX GPU)"
+          >
+            <SplitSquareHorizontal size={12} /> Compare
+          </button>
           <button
             className={`glass-btn ${cropMode ? 'glass-btn-active' : ''}`}
             style={{ padding: '4px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
@@ -642,6 +709,7 @@ export const PlayerViewport: React.FC = () => {
           onPointerDown={handleStagePointerDown}
           onPointerMove={handleStagePointerMove}
           onPointerUp={handleStagePointerUp}
+          onDoubleClick={handleStageDoubleClick}
           style={{
             position: 'relative',
             aspectRatio: aspectRatioCss,
@@ -732,6 +800,99 @@ export const PlayerViewport: React.FC = () => {
           )}
           {snapAxes.y && (
             <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1.5, background: '#22d3ee', pointerEvents: 'none' }} />
+          )}
+
+          {/* Before / After Vertical Wipe Compare Handle */}
+          {compareMode && (
+            <div
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                stageRef.current?.setPointerCapture(e.pointerId);
+                dragRef.current = { kind: 'compare' };
+              }}
+              style={{
+                position: 'absolute',
+                left: `${compareSplitX * 100}%`,
+                top: 0,
+                bottom: 0,
+                width: 3,
+                marginLeft: -1.5,
+                background: 'linear-gradient(180deg, #22d3ee, #ffffff, #a78bfa)',
+                boxShadow: '0 0 12px rgba(34,211,238,0.85)',
+                cursor: 'ew-resize',
+                zIndex: 8,
+              }}
+            >
+              <div
+                className="liquid-glass-pill mono"
+                style={{
+                  position: 'absolute',
+                  top: 12,
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  padding: '3px 8px',
+                  fontSize: 9.5,
+                  fontWeight: 700,
+                  whiteSpace: 'nowrap',
+                  color: '#fff',
+                  background: 'rgba(2,6,23,0.82)',
+                }}
+              >
+                Gốc ◀ | ▶ Đã chỉnh
+              </div>
+            </div>
+          )}
+
+          {/* Double-Click Inline Text Quick-Edit Modal */}
+          {inlineTextEdit && (
+            <div
+              onPointerDown={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                bottom: 14,
+                left: '8%',
+                right: '8%',
+                padding: 10,
+                borderRadius: 12,
+                background: 'rgba(15, 23, 42, 0.9)',
+                backdropFilter: 'blur(16px)',
+                border: '1px solid rgba(34,211,238,0.6)',
+                display: 'flex',
+                gap: 8,
+                zIndex: 12,
+              }}
+            >
+              <input
+                autoFocus
+                className="glass-input"
+                value={inlineTextEdit.value}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setInlineTextEdit({ ...inlineTextEdit, value: val });
+                  previewSelectedClip((c) => {
+                    if (c.text) {
+                      c.text.text = val;
+                      c.name = val.slice(0, 24);
+                    }
+                  });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === 'Escape') {
+                    setInlineTextEdit(null);
+                    void commitCurrentProject('Sửa nhanh Text trên Canvas');
+                  }
+                }}
+              />
+              <button
+                className="glass-btn glass-btn-primary"
+                onClick={() => {
+                  setInlineTextEdit(null);
+                  void commitCurrentProject('Sửa nhanh Text trên Canvas');
+                }}
+              >
+                OK
+              </button>
+            </div>
           )}
 
           {/* TikTok / Reels / Broadcast Safe Zone Guides */}

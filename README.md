@@ -20,26 +20,29 @@
   - Tích hợp sẵn 16 file `.cube` 17³ offline (`Kodak 2383`, `Fuji Eterna`, `CineStill 800T`, `Teal & Orange`, `Apple Log`, `Sony S-Log3`, `DJI D-Log M`, `Tokyo Cyber Neon`, `Leica B&W`...) và hỗ trợ nhập pack `.cube`/`.m4a` cá nhân.
 - **15 Bài Nhạc Nền Royalty-Free (Beat Grid BPM Chính Xác + Auto Beat Markers) & 40 Creator SFX**:
   - Nghe thử Audio inline ngay trong Studio Palette trước khi kéo thả vào Timeline.
-- **12 Smart Video Templates + Slot Replacement Wizard**:
-  - Dựng nhanh TikTok Beat-Sync Flash, Daily Aesthetic Vlog, Hormozi Viral Talking Head, Product Commercial... chỉ với **Auto-Fill từ Media Bin**.
+- **12 Smart Video Templates + Slot Replacement Wizard (`Fill: Cover/Fit`)**:
+  - Dựng nhanh TikTok Beat-Sync Flash, Daily Aesthetic Vlog, Hormozi Viral Talking Head, Product Commercial... chỉ với **Auto-Fill từ Media Bin** + chế độ `Lấp Đầy Khung (Cover)` không viền đen trên mọi tỉ lệ `9:16` / `1:1` / `2.35:1`.
 
-## Nâng cấp kiến trúc Pro NLE (v2.0 → v3.0)
+## Nâng cấp kiến trúc & UI/UX Pro NLE (v2.0 → v3.0)
 
 - **Kiến trúc macOS Tahoe Liquid Glass + Pro NLE Ergonomics**:
   - Phân tách **Layer Chrome (Liquid Glass khúc xạ thật)** & **Layer Content (Matte tương phản cao tiết kiệm GPU)**, hỗ trợ `prefers-reduced-transparency`.
   - Native Swift 6 Shell (`WKUIDelegate` `NSOpenPanel`, **0-copy local file import**, chừa vùng traffic lights `78px`, chọn cổng động, tự nhúng runtime `node` arm64).
   - **Resizable Split Panes** kéo chỉnh cỡ mọi khung & thu gọn 1 chạm.
-  - **Interactive On-Canvas Gizmo**: kéo 4 góc Scale, tay cầm Xoay (Rotate), Crop 4 cạnh, **Chroma Eyedropper hút màu trực tiếp**, đường gióng Snap tâm.
+  - **Interactive On-Canvas Gizmo (Video / Overlay / Text / Sticker)**: kéo 4 góc Scale, tay cầm Xoay (Rotate), Crop 4 cạnh, **Double-Click sửa chữ trực tiếp trên khung hình**, **Chroma Eyedropper hút màu trực tiếp**, đường gióng Snap tâm.
+  - **Before / After Split Wipe (`Compare`)**: thanh chia đôi kéo tay thời gian thực ngay trên Player để đối chiếu Frame gốc ↔ LUT + Multi-FX GPU.
+  - **Multi-FX GPU Stack & Sync 1-Chạm**: đảo thứ tự FX (`▲`/`▼`), `Áp Màu/LUT All` / `Áp VFX All` sang toàn bộ clip cùng loại và `Reset Màu/LUT`.
 - **Timeline 120Hz Zero-ReRender & Đa Track Pro**:
   - `PlaybackClock` tách khỏi React tree → **0 React re-render** trong suốt quá trình phát 60–120fps.
+  - **⚡ Beat-Cut Auto-Split**: tự động cắt clip đang chọn khớp theo toàn bộ Beat Markers trên Timeline + nút vết cắt chuyển cảnh `[⇄]` không đè chữ.
   - Hỗ trợ **Compound Clips** hoàn chỉnh (play, export, double-click breadcrumb chỉnh sửa bên trong, Ungroup tách lại).
   - Kéo thả clip dọc sang track khác, **Marquee Box & Shift+Click Multi-Select**, kéo thả trực tiếp từ Media Bin & Finder, quản lý `+ Track` / `Solo (S)` / `Mute` / `Lock`, kéo/xóa **Keyframe Diamond**, **In/Out Range (`I` / `O`)**.
 - **WebGL2 Compositor + Scopes + WebAudio Live Mixer**:
   - Multi-pass Custom GLSL FBO, **Heart & Star SDF**, pre-cache uniform, dirty-frame skip.
   - **Video Scopes Live** (RGB Parade & Luma Waveform) + **WebAudio Graph Engine** nghe trực tiếp âm lượng tới `200%`, Stereo Pan, Fade In/Out, Voice Preset + cột **Stereo VU Meter**.
-- **Xuất Video 100% WYSIWYG + SSE Real-Time**:
+- **Xuất Video 100% WYSIWYG + SSE Real-Time + Ảnh Bìa PNG**:
   - Hỗ trợ Fast Path (`VideoToolbox` + `lut3d` + `chromakey` + `alphamerge` + **Karaoke tô từng chữ** + multi-track Audio Mix) VÀ **Exact WYSIWYG GPU Frame-Pipe** khớp từng pixel Preview ↔ MP4.
-  - Thanh tiến trình SSE real-time (`%`, `fps`, `speed`), nút Hủy xuất, xuất theo vùng In/Out, và **Mở file trong Finder**.
+  - Nút **Ảnh Bìa PNG (`Export Cover`)** xuất khung hình hiện tại độ phân giải gốc tức thì, thanh tiến trình SSE real-time (`%`, `fps`, `speed`), nút Hủy xuất, xuất theo vùng In/Out, và **Mở file trong Finder**.
 - **On-Device AI (Apple Speech + Vision + T-ChatCut v2)**:
   - Tầng nhận diện giọng nói: `Whisper GGML` → `Parakeet CLI` → `Apple SFSpeechRecognizer` → VAD trung thực.
   - **T-ChatCut Copilot v2 (`Cmd+K`)**: thao tác theo clip chọn hoặc toàn timeline, tùy chọn kết nối **Local Ollama** / OpenAI / Gemini + Preview Ghost Diff.

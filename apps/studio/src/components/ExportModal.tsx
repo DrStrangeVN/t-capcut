@@ -1,8 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { Download, FileCode, FolderOpen, ListPlus, Rocket, Sparkles, X, Zap } from 'lucide-react';
+import { Download, FileCode, FolderOpen, Image, ListPlus, Rocket, Sparkles, X, Zap } from 'lucide-react';
 import { US_PER_SEC } from '@t-capcut/schema';
 import { engineApi } from '../engine/api';
-import { runWysiwygClientExport } from '../engine/WysiwygExporter';
+import { exportCoverFramePng, runWysiwygClientExport } from '../engine/WysiwygExporter';
+import { playbackClock } from '../engine/PlaybackClock';
 import { useEditorStore } from '../store/useEditorStore';
 
 export const ExportModal: React.FC = () => {
@@ -284,6 +285,23 @@ export const ExportModal: React.FC = () => {
               <X size={14} /> Hủy Xuất Video
             </button>
           )}
+          <button
+            className="glass-btn"
+            disabled={exporting}
+            title="Chụp ảnh bìa PNG Full HD/4K đúng khung hình đang xem"
+            onClick={async () => {
+              const blob = await exportCoverFramePng(project, playbackClock.getTimeUs(), loadedLuts);
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `${project.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_cover.png`;
+              a.click();
+              URL.revokeObjectURL(url);
+              setStatusMessage('Đã xuất Ảnh Bìa PNG thành công!');
+            }}
+          >
+            <Image size={14} color="#67e8f9" /> Ảnh Bìa PNG
+          </button>
           <button
             className="glass-btn"
             disabled={exporting}
