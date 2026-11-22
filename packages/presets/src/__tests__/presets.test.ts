@@ -14,6 +14,10 @@ import {
   AUDIO_SFX_CATALOG,
   ALL_AUDIO_CATALOG,
   VIDEO_TEMPLATES_CATALOG,
+  LUT_BY_ID,
+  AUDIO_BY_ID,
+  VFX_BY_ID,
+  TRANSITION_BY_ID,
   buildTextStyleFromPreset,
   applyVideoTemplateToProject,
 } from '../index.js';
@@ -21,7 +25,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS_DIR = path.resolve(__dirname, '../../assets');
 
-test('all creative catalog counts & unique IDs match v4.0.0 specification', () => {
+test('all creative catalog counts & unique IDs match v4.1.0 specification', () => {
   assert.equal(VFX_CATALOG.length, 48);
   assert.equal(TRANSITIONS_CATALOG.length, 32);
   assert.equal(LUTS_CATALOG.length, 16);
@@ -29,7 +33,20 @@ test('all creative catalog counts & unique IDs match v4.0.0 specification', () =
   assert.equal(STICKERS_CATALOG.length, 30);
   assert.equal(AUDIO_MUSIC_CATALOG.length, 15);
   assert.equal(AUDIO_SFX_CATALOG.length, 40);
-  assert.equal(VIDEO_TEMPLATES_CATALOG.length, 12);
+  assert.equal(VIDEO_TEMPLATES_CATALOG.length, 24);
+
+  const textIds = new Set(TEXT_CATALOG.map((t) => t.id));
+  for (const tpl of VIDEO_TEMPLATES_CATALOG) {
+    assert.ok(LUT_BY_ID[tpl.lutId], `Invalid lutId ${tpl.lutId} in ${tpl.id}`);
+    assert.ok(AUDIO_BY_ID[tpl.musicId], `Invalid musicId ${tpl.musicId} in ${tpl.id}`);
+    for (const s of tpl.slots) {
+      if (s.vfxId) assert.ok(VFX_BY_ID[s.vfxId], `Invalid vfxId ${s.vfxId} in ${tpl.id}`);
+      if (s.transitionId) assert.ok(TRANSITION_BY_ID[s.transitionId], `Invalid transitionId ${s.transitionId} in ${tpl.id}`);
+    }
+    for (const tx of tpl.texts) {
+      assert.ok(textIds.has(tx.presetId), `Invalid text presetId ${tx.presetId} in ${tpl.id}`);
+    }
+  }
 
   const uniqueIds = (items: Array<{ id: string }>) => new Set(items.map((x) => x.id)).size === items.length;
   assert.equal(uniqueIds(VFX_CATALOG), true);

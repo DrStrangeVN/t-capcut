@@ -779,22 +779,59 @@ export interface LocalCapCutDraftSummary {
   name: string;
   draftPath: string;
   modifiedAt: number;
+  source: 'CapCut' | 'JianYing' | 'Custom';
+  clipCount?: number;
 }
 
-export function scanLocalCapCutDrafts(): LocalCapCutDraftSummary[] {
-  const candidates = [
-    path.join(os.homedir(), 'Movies', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft'),
-    path.join(os.homedir(), 'Movies', 'JianyingPro', 'User Data', 'Projects', 'com.lveditor.draft'),
+export function scanLocalCapCutDrafts(customDir?: string): LocalCapCutDraftSummary[] {
+  const home = path.resolve(os.homedir());
+  const candidates: Array<{ dir: string; source: LocalCapCutDraftSummary['source'] }> = [
+    { dir: path.join(home, 'Movies', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft'), source: 'CapCut' },
+    { dir: path.join(home, 'Library', 'Containers', 'com.lemon.lvoverseas', 'Data', 'Movies', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft'), source: 'CapCut' },
+    { dir: path.join(home, 'Movies', 'JianyingPro', 'User Data', 'Projects', 'com.lveditor.draft'), source: 'JianYing' },
+    { dir: path.join(home, 'Library', 'Containers', 'com.lemon.lvpro', 'Data', 'Movies', 'JianyingPro', 'User Data', 'Projects', 'com.lveditor.draft'), source: 'JianYing' },
   ];
+
+  if (customDir && customDir.trim()) {
+    const resolvedCustom = path.resolve(customDir.trim().replace(/^~(?=\/|$)/, home));
+    if (resolvedCustom === home || resolvedCustom.startsWith(home + path.sep)) {
+      candidates.unshift({ dir: resolvedCustom, source: 'Custom' });
+    }
+  }
+
+  const seenPaths = new Set<string>();
   const results: LocalCapCutDraftSummary[] = [];
-  for (const dir of candidates) {
+
+  for (const { dir, source } of candidates) {
     if (!fs.existsSync(dir)) continue;
-    for (const entry of fs.readdirSync(dir)) {
+    let entries: string[] = [];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
       const folder = path.join(dir, entry);
-      const draftJson = path.join(folder, 'draft_content.json');
-      if (fs.existsSync(draftJson)) {
+      let draftJson = path.join(folder, 'draft_content.json');
+      if (!fs.existsSync(draftJson)) {
+        draftJson = path.join(folder, 'draft_info.json');
+      }
+      if (!fs.existsSync(draftJson) || seenPaths.has(draftJson)) continue;
+      seenPaths.add(draftJson);
+      try {
         const st = fs.statSync(draftJson);
-        results.push({ name: entry, draftPath: draftJson, modifiedAt: st.mtimeMs });
+        let clipCount: number | undefined;
+        if (st.size < 2_500_000) {
+          try {
+            const raw = JSON.parse(fs.readFileSync(draftJson, 'utf8')) as { tracks?: Array<{ segments?: unknown[] }> };
+            clipCount = (raw.tracks ?? []).reduce((sum, t) => sum + (Array.isArray(t.segments) ? t.segments.length : 0), 0);
+          } catch {
+            // ignore preview count failure
+          }
+        }
+        results.push({ name: entry, draftPath: draftJson, modifiedAt: st.mtimeMs, source, clipCount });
+      } catch {
+        // skip unreadable entry
       }
     }
   }

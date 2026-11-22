@@ -14,6 +14,7 @@ import {
   type AspectRatioPreset,
   type ChatCutPlan,
   type Clip,
+  type ColorGradeState,
   type KeyframePoint,
   type MediaAsset,
   type Microseconds,
@@ -36,8 +37,19 @@ import {
   type VfxPreset,
 } from '@t-capcut/presets';
 
-export type LeftPanelTab = 'media' | 'audio' | 'text' | 'stickers' | 'effects' | 'transitions' | 'luts' | 'templates' | 'ai';
-export type InspectorTab = 'transform' | 'color' | 'chroma' | 'speed' | 'audio';
+export type LeftPanelTab =
+  | 'media'
+  | 'audio'
+  | 'text'
+  | 'captions'
+  | 'stickers'
+  | 'effects'
+  | 'transitions'
+  | 'luts'
+  | 'adjustment'
+  | 'templates'
+  | 'ai';
+export type InspectorTab = 'transform' | 'audio' | 'speed' | 'animation' | 'tracking' | 'color';
 export type TimelineTool = 'select' | 'blade';
 
 interface EditorState {
@@ -72,6 +84,7 @@ interface EditorState {
   llmConfig: ChatCutLlmConfig | null;
   favoritePresetIds: string[];
   templateModalPreset: VideoTemplatePreset | null;
+  templateHubOpen: boolean;
   systemFonts: string[];
   hoverPreview: { kind: 'lut' | 'vfx'; id: string; name: string } | null;
   copiedAttributes: {
@@ -124,7 +137,7 @@ interface EditorState {
   jumpToCommand: (cmdId: string) => Promise<void>;
 
   createDemoSample: () => Promise<void>;
-  uploadMediaFile: (file: File) => Promise<void>;
+  uploadMediaFile: (file: File) => Promise<MediaAsset | null>;
   importMediaPath: (path: string) => Promise<void>;
   importCapCutDraftFile: (draftJson: unknown) => Promise<void>;
   addAssetToTimeline: (asset: MediaAsset, targetTrackId?: string, atUs?: Microseconds) => Promise<void>;
@@ -133,13 +146,19 @@ interface EditorState {
   applyKaraokeStyleAll: (preset: TextPreset) => Promise<void>;
   addStickerClip: (preset: StickerPreset, atUs?: Microseconds) => Promise<void>;
   addEffectClip: (shaderId: string, name: string, customFragmentGlsl?: string) => Promise<void>;
+  addAdjustmentLayerClip: (preset?: Partial<ColorGradeState>, name?: string) => Promise<void>;
   addVfxPreset: (vfx: VfxPreset, targetClipId?: string) => Promise<void>;
   setClipTransition: (clipId: string, transitionId: string, withPairedSfx?: boolean) => Promise<void>;
   applyBuiltinLut: (lut: BuiltinLutPreset) => Promise<void>;
   addBuiltinAudioToTimeline: (preset: AudioPreset, atUs?: Microseconds) => Promise<void>;
   toggleFavoritePreset: (id: string) => void;
   setTemplateModalPreset: (tpl: VideoTemplatePreset | null) => void;
-  applyTemplateProject: (template: VideoTemplatePreset, slotAssets: Array<MediaAsset | null>) => Promise<void>;
+  setTemplateHubOpen: (v: boolean) => void;
+  applyTemplateProject: (
+    template: VideoTemplatePreset,
+    slotAssets: Array<MediaAsset | null>,
+    opts?: { slotSlipUs?: Record<number, number>; textOverrides?: Record<number, string> }
+  ) => Promise<void>;
   importLocalPresetPack: (pack: {
     packName?: string;
     luts?: Array<{ id?: string; filename?: string; content: string }>;
@@ -267,6 +286,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   })(),
   templateModalPreset: null,
+  templateHubOpen: false,
   systemFonts: ['Inter', 'SF Pro Display', 'Helvetica Neue', 'Avenir Next', 'Georgia', 'Menlo'],
   hoverPreview: null,
   copiedAttributes: null,
@@ -509,14 +529,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const { asset } = await engineApi.uploadMedia(file);
       const p = get().project;
-      if (!p) return;
+      if (!p) return null;
       const next = clone(p);
       next.assets[asset.id] = asset;
       await get().commitProject(`Import ${asset.name}`, next);
       await get().loadWaveform(asset);
       set({ statusMessage: `Đã nhập ${asset.name}` });
+      return asset;
     } catch (err) {
       set({ errorMessage: `Lỗi nhập file: ${err instanceof Error ? err.message : String(err)}` });
+      return null;
     } finally {
       set({ busyTask: null });
     }
@@ -869,6 +891,47 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ selectedClipId: clip.id, selectedClipIds: [clip.id], statusMessage: `Đã thêm GPU VFX "${vfx.name}"` });
   },
 
+  addAdjustmentLayerClip: async (preset, name = 'Adjustment Layer') => {
+    const p = get().project;
+    if (!p) return;
+    const next = clone(p);
+    const scope = getActiveScopeMutable(next, get().nestedScopeId);
+    const track = scope.tracks.find((t) => t.type === 'effect') ?? scope.tracks[0];
+    const startUs = playbackClock.getTimeUs();
+    const cg = { ...createDefaultColorGrade(), ...(preset ?? {}) };
+    const clip: Clip = {
+      id: `adj_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      trackId: track.id,
+      assetId: null,
+      kind: 'adjustment',
+      name,
+      timelineStartUs: startUs,
+      durationUs: 5 * US_PER_SEC,
+      sourceStartUs: 0,
+      sourceDurationUs: 5 * US_PER_SEC,
+      locked: false,
+      disabled: false,
+      transform: createDefaultTransform(),
+      colorGrade: cg,
+      chromaKey: createDefaultChromaKey(),
+      mask: createDefaultMask(),
+      speed: createDefaultSpeed(),
+      audio: createDefaultAudioState(),
+      keyframes: {},
+      effects: [],
+      aiMattingEnabled: false,
+      autoReframeEnabled: false,
+    };
+    scope.clips[clip.id] = clip;
+    await get().commitProject(`Thêm ${name}`, next);
+    set({
+      selectedClipId: clip.id,
+      selectedClipIds: [clip.id],
+      inspectorTab: 'color',
+      statusMessage: `Đã thêm "${name}" lên Timeline! Kéo độ dài để chỉnh màu toàn cảnh bên dưới.`,
+    });
+  },
+
   setClipTransition: async (clipId, transitionId, withPairedSfx = false) => {
     const p = get().project;
     if (!p) return;
@@ -1056,8 +1119,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   setTemplateModalPreset: (tpl) => set({ templateModalPreset: tpl }),
+  setTemplateHubOpen: (v) => set({ templateHubOpen: v }),
 
-  applyTemplateProject: async (template, slotAssets) => {
+  applyTemplateProject: async (template, slotAssets, opts) => {
     const p = get().project;
     if (!p) return;
     set({ busyTask: `Đang dựng Smart Template "${template.name}"...` });
@@ -1074,7 +1138,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           data: new Float32Array(loadedLut.data),
         });
       }
-      const nextProj = applyVideoTemplateToProject(p, template, slotAssets, musicRes?.asset ?? null);
+      const nextProj = applyVideoTemplateToProject(p, template, slotAssets, musicRes?.asset ?? null, opts);
       if (loadedLut) {
         nextProj.luts = {
           ...(nextProj.luts ?? {}),
@@ -1083,11 +1147,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
       await get().commitProject(`Áp dụng Template: ${template.name}`, nextProj);
       if (musicRes?.asset) await get().loadWaveform(musicRes.asset);
-      playbackClock.setPlaying(false);
       playbackClock.setTimeUs(0);
+      playbackClock.setPlaying(true);
       set({
         playheadUs: 0,
+        isPlaying: true,
         templateModalPreset: null,
+        templateHubOpen: false,
         selectedClipId: null,
         statusMessage: `Đã tạo video từ Template "${template.name}" (${template.slots.length} cảnh + Nhạc + LUT + Karaoke)!`,
       });
@@ -2342,11 +2408,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const ab = await file.arrayBuffer();
       const bytes = new Uint8Array(ab);
       let bin = '';
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+      for (let i = 0; i < bytes.length; i += 8192) {
+        bin += String.fromCharCode(...bytes.subarray(i, Math.min(i + 8192, bytes.length)));
+      }
       const base64 = btoa(bin);
       const res = await engineApi.importUniversalFile(file.name, base64);
       if (res.kind === 'lottie' && res.lottieJson) {
         await get().addLottieJsonSticker(res.name || file.name, res.lottieJson);
+        set({ templateHubOpen: false });
         return;
       }
       if (res.project) {
@@ -2356,6 +2425,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           projectsList: list.projects,
           selectedClipId: null,
           playheadUs: 0,
+          templateHubOpen: false,
           importReport: res.report ? { title: res.project.name, ...res.report } : null,
           statusMessage: `Đã nhập mẫu "${res.project.name}" (${res.report?.compatibilityPct ?? 100}% tương thích)!`,
         });
@@ -2372,11 +2442,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const res = await engineApi.importLocalCapCutDraftPath(draftPath);
       const list = await engineApi.listProjects();
+      const rep = res.report as {
+        compatibilityPct?: number;
+        mappedItems?: string[];
+        fallbackItems?: string[];
+        missingMediaSlots?: Array<{ slotIndex: number; clipId: string; originalPath: string; label: string; durationUs: number }>;
+      } | undefined;
       set({
         project: res.project,
         projectsList: list.projects,
         selectedClipId: null,
         playheadUs: 0,
+        templateHubOpen: false,
+        importReport: rep && typeof rep.compatibilityPct === 'number'
+          ? {
+              title: res.project.name,
+              compatibilityPct: rep.compatibilityPct,
+              mappedItems: rep.mappedItems ?? [],
+              fallbackItems: rep.fallbackItems ?? [],
+              missingMediaSlots: rep.missingMediaSlots ?? [],
+            }
+          : null,
         statusMessage: `Đã mở dự án CapCut "${res.project.name}"!`,
       });
     } catch (err) {

@@ -205,8 +205,10 @@ export const engineApi = {
       method: 'POST',
       body: JSON.stringify({ assetId, targetDurationUs, outroStartUs }),
     }),
-  scanLocalCapCutDrafts: () =>
-    reqJson<{ drafts: Array<{ name: string; draftPath: string; modifiedAt: number }> }>('/api/interop/scan-capcut-local'),
+  scanLocalCapCutDrafts: (customDir?: string) =>
+    reqJson<{ drafts: Array<{ name: string; draftPath: string; modifiedAt: number; source?: string; clipCount?: number }> }>(
+      customDir ? `/api/interop/scan-capcut-local?dir=${encodeURIComponent(customDir)}` : '/api/interop/scan-capcut-local'
+    ),
   importLocalCapCutDraftPath: (draftPath: string) =>
     reqJson<{ project: Project; report?: Record<string, unknown> }>('/api/interop/import-path-draft', {
       method: 'POST',

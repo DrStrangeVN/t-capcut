@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
@@ -1216,19 +1217,42 @@ export class TCapCutEngineServer {
     }
 
     if (pathname === '/api/interop/scan-capcut-local' && req.method === 'GET') {
-      return sendJson(req, res, 200, { drafts: scanLocalCapCutDrafts() });
+      const customDir = reqUrl.searchParams.get('dir') || undefined;
+      return sendJson(req, res, 200, { drafts: scanLocalCapCutDrafts(customDir) });
     }
 
     if (pathname === '/api/interop/import-path-draft' && req.method === 'POST') {
       const body = await readJsonBody<{ draftPath: string }>(req);
-      const drafts = scanLocalCapCutDrafts();
-      const matched = drafts.find((d) => d.draftPath === body.draftPath);
-      if (!matched || !fs.existsSync(matched.draftPath)) {
-        return sendJson(req, res, 404, { error: 'CapCut draft not found in CapCut projects folder' });
+      const rawPath = (body.draftPath || '').trim().replace(/^~(?=\/|$)/, os.homedir());
+      if (!rawPath || !fs.existsSync(rawPath)) {
+        return sendJson(req, res, 404, { error: 'Không tìm thấy file draft_content.json / draft_info.json tại đường dẫn này' });
       }
-      const rawDraft = JSON.parse(fs.readFileSync(matched.draftPath, 'utf8')) as CapCutDraftContent;
-      const { project, report } = importFromCapCutDraftDetailed(rawDraft, `proj_cc_${Date.now()}`, (p) => fs.existsSync(p));
-      project.name = matched.name || project.name;
+      let realHome: string;
+      let realDraft: string;
+      try {
+        realHome = fs.realpathSync(os.homedir());
+        realDraft = fs.realpathSync(rawPath);
+      } catch {
+        return sendJson(req, res, 404, { error: 'Đường dẫn CapCut Draft không hợp lệ' });
+      }
+      if (!(realDraft === realHome || realDraft.startsWith(realHome + path.sep)) || !realDraft.toLowerCase().endsWith('.json')) {
+        return sendJson(req, res, 403, { error: 'Forbidden: CapCut draft path must be a .json file inside your home directory' });
+      }
+      const draftDir = path.dirname(realDraft);
+      const pathResolver = (orig: string): string | null => {
+        if (!orig) return null;
+        if (fs.existsSync(orig)) return orig;
+        const base = path.basename(orig);
+        const directInDraft = path.join(draftDir, base);
+        if (fs.existsSync(directInDraft)) return directInDraft;
+        const inResources = path.join(draftDir, 'Resources', base);
+        if (fs.existsSync(inResources)) return inResources;
+        return null;
+      };
+      const rawDraft = JSON.parse(fs.readFileSync(realDraft, 'utf8')) as CapCutDraftContent;
+      const { project, report } = importFromCapCutDraftDetailed(rawDraft, `proj_cc_${Date.now()}`, (p) => fs.existsSync(p), pathResolver);
+      const folderName = path.basename(draftDir);
+      project.name = rawDraft.name || folderName || project.name;
       Object.values(project.assets).forEach((a) => this.registeredAssets.set(a.id, a));
       this.db.saveImportedProject(project);
       return sendJson(req, res, 200, { project, report });
@@ -1248,23 +1272,58 @@ export class TCapCutEngineServer {
       } else if (ext === '.tcapcut-tpl' || ext === '.capcut' || ext === '.zip' || ext === '.lottie') {
         const files = unzipBufferToMap(buf);
         const tplEntry = files.get('manifest.json');
-        const ccEntry = Array.from(files.entries()).find(([k]) => k.endsWith('draft_content.json'))?.[1];
+        const ccEntry = Array.from(files.entries()).find(
+          ([k]) => k.endsWith('draft_content.json') || k.endsWith('draft_info.json')
+        )?.[1];
         const lottieEntry = Array.from(files.entries()).find(([k]) => k.endsWith('.json'))?.[1];
+
+        // Extract any bundled media/audio assets inside the template package safely into dataDir
+        const MEDIA_EXTS = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v', '.mp3', '.m4a', '.wav', '.aac', '.png', '.jpg', '.jpeg', '.webp']);
+        const extractedMap = new Map<string, string>();
+        const importDir = path.join(this.paths.dataDir, 'imported-templates', `imp_${Date.now()}`);
+        for (const [entryName, entryBuf] of files.entries()) {
+          const entryExt = path.extname(entryName).toLowerCase();
+          if (!MEDIA_EXTS.has(entryExt) || entryBuf.length === 0) continue;
+          const safeRel = entryName.replace(/\\/g, '/').replace(/^\/+/, '');
+          if (safeRel.includes('..')) continue;
+          const base = path.basename(safeRel);
+          if (!base) continue;
+          fs.mkdirSync(importDir, { recursive: true });
+          const outFile = path.join(importDir, `${extractedMap.size}_${base.replace(/[^a-zA-Z0-9._-]/g, '_')}`);
+          fs.writeFileSync(outFile, entryBuf);
+          extractedMap.set(safeRel.toLowerCase(), outFile);
+          extractedMap.set(base.toLowerCase(), outFile);
+        }
+        const zipResolver = (orig: string): string | null => {
+          if (!orig) return null;
+          const norm = orig.replace(/\\/g, '/').toLowerCase();
+          const byRel = extractedMap.get(norm);
+          if (byRel && fs.existsSync(byRel)) return byRel;
+          const byBase = extractedMap.get(path.basename(norm));
+          if (byBase && fs.existsSync(byBase)) return byBase;
+          return fs.existsSync(orig) ? orig : null;
+        };
+
         if (tplEntry) {
           const pkg = JSON.parse(tplEntry.toString('utf8')) as TCapCutTemplatePackage;
           importedProject = { ...pkg.project, id: `proj_tpl_${Date.now()}`, name: pkg.name };
+          for (const asset of Object.values(importedProject.assets)) {
+            const resolved = zipResolver(asset.sourcePath);
+            if (resolved) asset.sourcePath = resolved;
+          }
         } else if (ccEntry) {
           const parsed = importFromCapCutDraftDetailed(
             JSON.parse(ccEntry.toString('utf8')) as CapCutDraftContent,
             `proj_cczip_${Date.now()}`,
-            (p) => fs.existsSync(p)
+            (p) => fs.existsSync(p),
+            zipResolver
           );
           importedProject = parsed.project;
           report = parsed.report;
         } else if (lottieEntry) {
           return sendJson(req, res, 200, { kind: 'lottie', lottieJson: lottieEntry.toString('utf8'), name: path.basename(body.filename, ext) });
         } else {
-          return sendJson(req, res, 400, { error: 'Không tìm thấy manifest.json / draft_content.json / Lottie JSON trong gói zip' });
+          return sendJson(req, res, 400, { error: 'Không tìm thấy manifest.json / draft_content.json / draft_info.json / Lottie JSON trong gói zip' });
         }
       } else {
         const rawText = buf.toString('utf8');

@@ -17,6 +17,91 @@ export interface LoadedLutTexture {
   data: Float32Array;
 }
 
+function easeOutCubic(t: number): number {
+  const u = 1 - Math.max(0, Math.min(1, t));
+  return 1 - u * u * u;
+}
+
+function evaluateClipAnimation(
+  clip: Clip,
+  localUs: number,
+  durationUs: number
+): { dx: number; dy: number; dScale: number; dRot: number; dOpacity: number } {
+  let dx = 0;
+  let dy = 0;
+  let dScale = 1;
+  let dRot = 0;
+  let dOpacity = 1;
+  const anim = clip.animation;
+  if (!anim) return { dx, dy, dScale, dRot, dOpacity };
+
+  const inDur = Math.max(80_000, anim.inDurationUs ?? 500_000);
+  if (anim.in && anim.in !== 'none' && localUs < inDur) {
+    const t = Math.max(0, Math.min(1, localUs / inDur));
+    const e = easeOutCubic(t);
+    const inv = 1 - e;
+    if (anim.in === 'fade_in') dOpacity *= e;
+    else if (anim.in === 'zoom_in') {
+      dScale *= 0.65 + 0.35 * e;
+      dOpacity *= Math.min(1, t * 2.2);
+    } else if (anim.in === 'slide_left') dx -= inv * 1.4;
+    else if (anim.in === 'slide_right') dx += inv * 1.4;
+    else if (anim.in === 'slide_up') dy += inv * 1.2;
+    else if (anim.in === 'slide_down') dy -= inv * 1.2;
+    else if (anim.in === 'shake_in') {
+      dx += Math.sin(t * Math.PI * 10) * inv * 0.12;
+      dy += Math.cos(t * Math.PI * 8) * inv * 0.08;
+      dScale *= 1 + inv * 0.18;
+    } else if (anim.in === 'bounce_in') {
+      const overshoot = 1 + Math.sin(t * Math.PI * 2.5) * inv * 0.28;
+      dScale *= t < 0.15 ? t / 0.15 : overshoot;
+    } else if (anim.in === 'spin_in') {
+      dRot -= inv * 90;
+      dScale *= 0.55 + 0.45 * e;
+      dOpacity *= Math.min(1, t * 2);
+    }
+  }
+
+  const outDur = Math.max(80_000, anim.outDurationUs ?? 500_000);
+  const remUs = durationUs - localUs;
+  if (anim.out && anim.out !== 'none' && remUs >= 0 && remUs < outDur) {
+    const t = Math.max(0, Math.min(1, 1 - remUs / outDur)); // 0 -> 1 at end
+    const e = t * t * (3 - 2 * t);
+    if (anim.out === 'fade_out') dOpacity *= 1 - e;
+    else if (anim.out === 'zoom_out') {
+      dScale *= 1 + e * 0.45;
+      dOpacity *= 1 - e;
+    } else if (anim.out === 'slide_left') dx -= e * 1.4;
+    else if (anim.out === 'slide_right') dx += e * 1.4;
+    else if (anim.out === 'slide_down') dy -= e * 1.2;
+    else if (anim.out === 'spin_out') {
+      dRot += e * 90;
+      dScale *= Math.max(0.3, 1 - e * 0.5);
+      dOpacity *= 1 - e;
+    }
+  }
+
+  if (anim.combo && anim.combo !== 'none') {
+    const sec = localUs / 1_000_000;
+    if (anim.combo === 'pendulum') {
+      dRot += Math.sin(sec * Math.PI * 2.2) * 6;
+    } else if (anim.combo === 'wobble') {
+      dx += Math.sin(sec * 8.0) * 0.035;
+      dRot += Math.cos(sec * 6.0) * 3.5;
+    } else if (anim.combo === 'beat_pulse') {
+      const pulse = Math.pow(Math.max(0, Math.sin(sec * Math.PI * 2.0)), 6);
+      dScale *= 1 + pulse * 0.12;
+    } else if (anim.combo === 'zoom_bounce') {
+      dScale *= 1.06 + Math.abs(Math.sin(sec * Math.PI * 2.4)) * 0.08;
+    } else if (anim.combo === 'distort_swing') {
+      dRot += Math.sin(sec * Math.PI * 3.0) * 8;
+      dScale *= 1.04 + Math.cos(sec * Math.PI * 3.0) * 0.05;
+    }
+  }
+
+  return { dx, dy, dScale, dRot, dOpacity };
+}
+
 const VERTEX_SHADER = `#version 300 es
 precision highp float;
 layout(location = 0) in vec2 aPos;
@@ -1420,14 +1505,16 @@ void main() {
       gl.uniform1i(this.uLoc.uHasMattingMask, 0);
     }
 
-    const lutEntry = !bypassGrade && clip.colorGrade.lutId ? this.lutTextures.get(clip.colorGrade.lutId) : undefined;
+    const effectiveLutId = !bypassGrade ? (clip.colorGrade.lutId || adj?.lutId) : undefined;
+    const effectiveLutIntensity = clip.colorGrade.lutId ? clip.colorGrade.lutIntensity : (adj?.lutIntensity ?? 1);
+    const lutEntry = effectiveLutId ? this.lutTextures.get(effectiveLutId) : undefined;
     if (lutEntry) {
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, lutEntry.tex);
       gl.uniform1i(this.uLoc.uLutTexture, 2);
       gl.uniform1i(this.uLoc.uHasLut, 1);
       gl.uniform1f(this.uLoc.uLutSize, lutEntry.size);
-      gl.uniform1f(this.uLoc.uLutIntensity, clip.colorGrade.lutIntensity);
+      gl.uniform1f(this.uLoc.uLutIntensity, effectiveLutIntensity);
     } else {
       gl.uniform1i(this.uLoc.uHasLut, 0);
     }
@@ -1440,12 +1527,13 @@ void main() {
     gl.uniform1i(this.uLoc.uCurvesTexture, 4);
     gl.uniform1i(this.uLoc.uHasCurves, hasCurves ? 1 : 0);
 
-    const x = getClipPropertyAtTime(clip, 'x', localUs);
-    const y = getClipPropertyAtTime(clip, 'y', localUs);
-    const scaleX = getClipPropertyAtTime(clip, 'scaleX', localUs);
-    const scaleY = getClipPropertyAtTime(clip, 'scaleY', localUs);
-    const rot = getClipPropertyAtTime(clip, 'rotation', localUs);
-    const opacity = getClipPropertyAtTime(clip, 'opacity', localUs);
+    const animDelta = evaluateClipAnimation(clip, localUs, clip.durationUs);
+    const x = getClipPropertyAtTime(clip, 'x', localUs) + animDelta.dx;
+    const y = getClipPropertyAtTime(clip, 'y', localUs) + animDelta.dy;
+    const scaleX = getClipPropertyAtTime(clip, 'scaleX', localUs) * animDelta.dScale;
+    const scaleY = getClipPropertyAtTime(clip, 'scaleY', localUs) * animDelta.dScale;
+    const rot = getClipPropertyAtTime(clip, 'rotation', localUs) + animDelta.dRot;
+    const opacity = getClipPropertyAtTime(clip, 'opacity', localUs) * animDelta.dOpacity;
 
     gl.uniform2f(this.uLoc.uResolution, w, h);
     gl.uniform2f(this.uLoc.uSrcResolution, srcW, srcH);
@@ -1481,12 +1569,14 @@ void main() {
       gl.uniform3fv(this.uLoc.uGain, [0, 0, 0]);
       gl.uniform1i(this.uLoc.uHasHsl, 0);
     } else {
-      gl.uniform1f(this.uLoc.uExposure, cg.exposure + (adj?.exposure ?? 0));
-      gl.uniform1f(this.uLoc.uBrightness, getClipPropertyAtTime(clip, 'brightness', localUs) + (adj?.brightness ?? 0));
-      gl.uniform1f(this.uLoc.uContrast, getClipPropertyAtTime(clip, 'contrast', localUs) + (adj?.contrast ?? 0));
+      const retouchBright = (clip.retouch?.brighten ?? 0) * 0.16 + (clip.retouch?.glow ?? 0) * 0.1;
+      const retouchWarm = (clip.retouch?.smoothSkin ?? 0) * 0.08;
+      gl.uniform1f(this.uLoc.uExposure, cg.exposure + (adj?.exposure ?? 0) + (clip.retouch?.glow ?? 0) * 0.08);
+      gl.uniform1f(this.uLoc.uBrightness, getClipPropertyAtTime(clip, 'brightness', localUs) + (adj?.brightness ?? 0) + retouchBright);
+      gl.uniform1f(this.uLoc.uContrast, getClipPropertyAtTime(clip, 'contrast', localUs) + (adj?.contrast ?? 0) - (clip.retouch?.smoothSkin ?? 0) * 0.06);
       gl.uniform1f(this.uLoc.uSaturation, getClipPropertyAtTime(clip, 'saturation', localUs) + (adj?.saturation ?? 0));
-      gl.uniform1f(this.uLoc.uVibrance, cg.vibrance + (adj?.vibrance ?? 0));
-      gl.uniform1f(this.uLoc.uTemperature, cg.temperature + (adj?.temperature ?? 0));
+      gl.uniform1f(this.uLoc.uVibrance, cg.vibrance + (adj?.vibrance ?? 0) + (clip.retouch?.smoothSkin ?? 0) * 0.08);
+      gl.uniform1f(this.uLoc.uTemperature, cg.temperature + (adj?.temperature ?? 0) + retouchWarm);
       gl.uniform1f(this.uLoc.uTint, cg.tint + (adj?.tint ?? 0));
       gl.uniform1f(this.uLoc.uVignette, Math.max(cg.vignette, adj?.vignette ?? 0));
       gl.uniform1f(this.uLoc.uSharpness, Math.max(cg.sharpness, adj?.sharpness ?? 0));

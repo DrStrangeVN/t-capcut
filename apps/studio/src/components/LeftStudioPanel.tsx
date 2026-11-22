@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioWaveform,
   Bot,
+  Captions,
   CheckCircle2,
   Code2,
   Download,
@@ -17,6 +18,7 @@ import {
   Plus,
   Scissors,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Star,
   Sticker,
@@ -49,15 +51,28 @@ import { engineApi, presetAudioStreamUrl } from '../engine/api';
 import { useEditorStore, type LeftPanelTab } from '../store/useEditorStore';
 
 const TABS: Array<{ id: LeftPanelTab; label: string; icon: React.ReactNode }> = [
-  { id: 'media', label: 'Media', icon: <Film size={13} /> },
-  { id: 'audio', label: 'Audio', icon: <Music size={13} /> },
-  { id: 'text', label: 'Text', icon: <Subtitles size={13} /> },
-  { id: 'stickers', label: 'Stickers', icon: <Sticker size={13} /> },
-  { id: 'effects', label: 'VFX 48', icon: <Sparkles size={13} /> },
-  { id: 'transitions', label: 'Trans 32', icon: <Layers size={13} /> },
-  { id: 'luts', label: 'LUTs 16', icon: <Palette size={13} /> },
-  { id: 'templates', label: 'Mẫu 12+', icon: <LayoutTemplate size={13} /> },
-  { id: 'ai', label: 'AI Lab', icon: <Bot size={13} /> },
+  { id: 'media', label: 'Media', icon: <Film size={12} /> },
+  { id: 'audio', label: 'Audio', icon: <Music size={12} /> },
+  { id: 'text', label: 'Text', icon: <Subtitles size={12} /> },
+  { id: 'captions', label: 'Captions', icon: <Captions size={12} /> },
+  { id: 'stickers', label: 'Stickers', icon: <Sticker size={12} /> },
+  { id: 'effects', label: 'Effects', icon: <Sparkles size={12} /> },
+  { id: 'transitions', label: 'Trans 32', icon: <Layers size={12} /> },
+  { id: 'luts', label: 'Filters 16', icon: <Palette size={12} /> },
+  { id: 'adjustment', label: 'Adjust', icon: <SlidersHorizontal size={12} /> },
+  { id: 'templates', label: 'Mẫu 24+', icon: <LayoutTemplate size={12} /> },
+  { id: 'ai', label: 'AI Lab', icon: <Bot size={12} /> },
+];
+
+const BODY_FX_IDS = ['subject_neon_glow', 'hologram_scan', 'neon_edge', 'chromatic', 'beat_pulse', 'speed_lines'];
+
+const ADJUSTMENT_PRESETS = [
+  { id: 'adj_warm_cine', name: 'Warm Cinema Layer', desc: 'Nhiệt ấm + tương phản phim rạp', grade: { contrast: 0.22, temperature: 0.25, vibrance: 0.16, vignette: 0.2 } },
+  { id: 'adj_moody_teal', name: 'Moody Teal Layer', desc: 'Xanh lạnh phim đêm hiện đại', grade: { contrast: 0.28, temperature: -0.24, saturation: -0.1, vignette: 0.25 } },
+  { id: 'adj_high_contrast', name: 'High Contrast Punch', desc: 'Sắc nét & độ tương phản mạnh', grade: { contrast: 0.35, sharpness: 0.3, saturation: 0.15 } },
+  { id: 'adj_vivid_vlog', name: 'Vivid Vlog Bright', desc: 'Sáng trong rực rỡ cho Vlog / Food', grade: { brightness: 0.14, contrast: 0.12, vibrance: 0.34, saturation: 0.16 } },
+  { id: 'adj_clean_bright', name: 'Studio Clean Bright', desc: 'Ánh sáng đều cho Tech Review', grade: { exposure: 0.15, brightness: 0.12, shadows: 0.22, sharpness: 0.2 } },
+  { id: 'adj_noir_bw', name: 'Classic Noir B&W', desc: 'Đen trắng nghệ thuật Leica', grade: { saturation: -1, contrast: 0.38, vignette: 0.35 } },
 ];
 
 const DEFAULT_CUSTOM_GLSL = `vec4 effectMain(sampler2D tex, vec2 uv, float time, float intensity) {
@@ -105,6 +120,11 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
   const addBuiltinAudioToTimeline = useEditorStore((s) => s.addBuiltinAudioToTimeline);
   const toggleFavoritePreset = useEditorStore((s) => s.toggleFavoritePreset);
   const setTemplateModalPreset = useEditorStore((s) => s.setTemplateModalPreset);
+  const setTemplateHubOpen = useEditorStore((s) => s.setTemplateHubOpen);
+  const addAdjustmentLayerClip = useEditorStore((s) => s.addAdjustmentLayerClip);
+  const autoColorMatchToPreviousClip = useEditorStore((s) => s.autoColorMatchToPreviousClip);
+  const translateSelectedSubtitle = useEditorStore((s) => s.translateSelectedSubtitle);
+  const detachAudioFromClip = useEditorStore((s) => s.detachAudioFromClip);
   const importLocalPresetPack = useEditorStore((s) => s.importLocalPresetPack);
   const runAiTask = useEditorStore((s) => s.runAiTask);
   const removeSilencesFromClip = useEditorStore((s) => s.removeSilencesFromClip);
@@ -137,7 +157,8 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
   // Creative search + category filters + preview state
   const [searchQuery, setSearchQuery] = useState('');
   const [onlyFavorites, setOnlyFavorites] = useState(false);
-  const [audioSubTab, setAudioSubTab] = useState<'music' | 'sfx'>('music');
+  const [audioSubTab, setAudioSubTab] = useState<'music' | 'sfx' | 'extract' | 'tts'>('music');
+  const [effectSubTab, setEffectSubTab] = useState<'video' | 'body'>('video');
   const [audioCat, setAudioCat] = useState<string>('all');
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [textCat, setTextCat] = useState<string>('all');
@@ -220,7 +241,7 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
     await importLocalPresetPack({ packName: `Pack (${luts.length + audioFiles.length} items)`, luts, audioFiles });
   };
 
-  const showLibraryFilter = leftTab !== 'media' && leftTab !== 'ai';
+  const showLibraryFilter = leftTab !== 'media' && leftTab !== 'ai' && leftTab !== 'adjustment' && leftTab !== 'captions';
 
   const renderFavBtn = (id: string) => {
     const isFav = favoritePresetIds.includes(id);
@@ -293,38 +314,38 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
 
   return (
     <div className="nle-content-surface" style={{ width: widthPx, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', flexShrink: 0 }}>
-      {/* Two-row compact Liquid Glass Studio Rail (9 libraries cleanly accessible with zero cramping) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4, padding: '8px 8px 4px' }}>
-        {TABS.slice(0, 5).map((t) => (
+      {/* Two-row compact CapCut Desktop Studio Rail (11 libraries cleanly accessible) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 3, padding: '8px 8px 3px' }}>
+        {TABS.slice(0, 6).map((t) => (
           <button
             key={t.id}
             data-tab={t.id}
             className={`glass-btn ${leftTab === t.id ? 'glass-btn-active' : ''}`}
-            style={{ padding: '6px 3px', fontSize: 10, flexDirection: 'column', gap: 2 }}
+            style={{ padding: '5px 2px', fontSize: 9.5, flexDirection: 'column', gap: 2, minWidth: 0 }}
             onClick={() => {
               setLeftTab(t.id);
               setSearchQuery('');
             }}
           >
             {t.icon}
-            <span>{t.label}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{t.label}</span>
           </button>
         ))}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, padding: '0 8px 8px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-        {TABS.slice(5).map((t) => (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 3, padding: '0 8px 8px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        {TABS.slice(6).map((t) => (
           <button
             key={t.id}
             data-tab={t.id}
             className={`glass-btn ${leftTab === t.id ? 'glass-btn-active' : ''}`}
-            style={{ padding: '6px 3px', fontSize: 10, flexDirection: 'column', gap: 2 }}
+            style={{ padding: '5px 2px', fontSize: 9.5, flexDirection: 'column', gap: 2, minWidth: 0 }}
             onClick={() => {
               setLeftTab(t.id);
               setSearchQuery('');
             }}
           >
             {t.icon}
-            <span>{t.label}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{t.label}</span>
           </button>
         ))}
       </div>
@@ -469,92 +490,152 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
           </>
         )}
 
-        {/* ======================== AUDIO & SFX TAB (15 MUSIC + 40 SFX OFFLINE) ======================== */}
+        {/* ======================== AUDIO & SFX TAB (4 SUB-TABS CAPCUT) ======================== */}
         {leftTab === 'audio' && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
               <button
                 className={`glass-btn ${audioSubTab === 'music' ? 'glass-btn-active' : ''}`}
-                style={{ fontSize: 11, whiteSpace: 'nowrap', padding: '7px 6px' }}
+                style={{ fontSize: 10, padding: '6px 3px', justifyContent: 'center' }}
                 onClick={() => {
                   setAudioSubTab('music');
                   setAudioCat('all');
                 }}
               >
-                🎵 Nhạc Nền (15)
+                Nhạc 15
               </button>
               <button
                 className={`glass-btn ${audioSubTab === 'sfx' ? 'glass-btn-active' : ''}`}
-                style={{ fontSize: 11, whiteSpace: 'nowrap', padding: '7px 6px' }}
+                style={{ fontSize: 10, padding: '6px 3px', justifyContent: 'center' }}
                 onClick={() => {
                   setAudioSubTab('sfx');
                   setAudioCat('all');
                 }}
               >
-                🔊 Bộ SFX (40)
+                SFX 40
+              </button>
+              <button
+                className={`glass-btn ${audioSubTab === 'extract' ? 'glass-btn-active' : ''}`}
+                style={{ fontSize: 10, padding: '6px 3px', justifyContent: 'center' }}
+                onClick={() => setAudioSubTab('extract')}
+              >
+                Tách âm
+              </button>
+              <button
+                className={`glass-btn ${audioSubTab === 'tts' ? 'glass-btn-active' : ''}`}
+                style={{ fontSize: 10, padding: '6px 3px', justifyContent: 'center' }}
+                onClick={() => setAudioSubTab('tts')}
+              >
+                TTS AI
               </button>
             </div>
-            <button className="glass-btn" style={{ fontSize: 11 }} onClick={() => void smartRemixSelectedMusic()}>
-              <Sparkles size={12} color="#34d399" /> Smart Music Remix (Tự khớp Video + Outro)
-            </button>
 
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {(audioSubTab === 'music' ? AUDIO_MUSIC_CATEGORIES : AUDIO_SFX_CATEGORIES).map((c) => (
-                <button key={c.id} style={catPillStyle(audioCat === c.id)} onClick={() => setAudioCat(c.id)}>
-                  {c.label}
+            {audioSubTab === 'extract' ? (
+              <div style={{ padding: 10, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: '#67e8f9' }}>Tách &amp; Xử Lý Âm Thanh Từ Video</div>
+                <button className="glass-btn glass-btn-primary" disabled={!selectedClip} onClick={() => selectedClip && void detachAudioFromClip(selectedClip.id)}>
+                  <Scissors size={12} /> Tách Âm Thanh (Detach Audio) Clip Đang Chọn
                 </button>
-              ))}
-            </div>
-
-            {(audioSubTab === 'music' ? filteredMusic : filteredSfx).map((item) => {
-              const isPlaying = playingAudioId === item.id;
-              return (
-                <div
-                  key={item.id}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('application/x-tcapcut-preset', JSON.stringify({ kind: 'audio', preset: item }));
-                  }}
-                  style={{
-                    padding: 9,
-                    borderRadius: 12,
-                    background: isPlaying ? 'rgba(52, 211, 153, 0.12)' : 'rgba(255,255,255,0.04)',
-                    border: isPlaying ? '1px solid rgba(52, 211, 153, 0.45)' : '1px solid rgba(255,255,255,0.08)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 6,
-                    cursor: 'grab',
-                  }}
-                >
+                <button className="glass-btn" disabled={!activeAsset} onClick={() => activeAsset && void runAiTask(activeAsset.id, 'stem-separate')}>
+                  <Music size={12} color="#34d399" /> Tách Riêng Vocals &amp; Beat Nhạc (AI Stems)
+                </button>
+                <button className="glass-btn" disabled={!activeAsset} onClick={() => activeAsset && void runAiTask(activeAsset.id, 'beats')}>
+                  <AudioWaveform size={12} color="#fbbf24" /> Bắt Nhịp Beat Markers Tự Động
+                </button>
+                <button className="glass-btn" style={{ fontSize: 11 }} onClick={() => void smartRemixSelectedMusic()}>
+                  <Sparkles size={12} color="#34d399" /> Smart Music Remix (Tự khớp Video + Outro)
+                </button>
+              </div>
+            ) : audioSubTab === 'tts' ? (
+              <div style={{ padding: 10, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: '#a78bfa' }}>Text-to-Speech Offline (Giọng đọc CapCut)</div>
+                <textarea
+                  className="glass-textarea"
+                  rows={3}
+                  placeholder="Nhập văn bản cần chuyển thành giọng đọc..."
+                  value={ttsText}
+                  onChange={(e) => setTtsText(e.target.value)}
+                />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <select className="glass-select" style={{ width: 125, fontSize: 11 }} value={ttsLang} onChange={(e) => setTtsLang(e.target.value as 'vi' | 'en')}>
+                    <option value="vi">Tiếng Việt (Linh)</option>
+                    <option value="en">English (US)</option>
+                  </select>
                   <button
-                    className="glass-btn"
-                    style={{ padding: '6px 7px', flexShrink: 0 }}
-                    onClick={() => toggleAudioPreview(item.id, item.filename)}
-                    title={isPlaying ? 'Dừng nghe thử' : 'Nghe thử offline'}
+                    className="glass-btn glass-btn-primary"
+                    style={{ flex: 1, fontSize: 11 }}
+                    disabled={!ttsText.trim()}
+                    onClick={() => void generateAiVoiceover(ttsText, ttsLang)}
                   >
-                    {isPlaying ? <Pause size={12} color="#34d399" /> : <Play size={12} color="#67e8f9" />}
-                  </button>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                      {item.bpm > 0 && (
-                        <span className="mono" style={{ fontSize: 9.5, color: '#facc15', background: 'rgba(250,204,21,0.14)', padding: '1px 6px', borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap' }}>
-                          {item.bpm} BPM
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 10, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {item.durationSec}s · {item.desc}
-                    </div>
-                  </div>
-                  {renderFavBtn(item.id)}
-                  <button className="glass-btn glass-btn-primary" style={{ padding: '5px 8px', fontSize: 11 }} onClick={() => void addBuiltinAudioToTimeline(item)}>
-                    <Plus size={12} />
+                    Tạo Giọng Đọc + Phụ Đề
                   </button>
                 </div>
-              );
-            })}
+              </div>
+            ) : (
+              <>
+                <button className="glass-btn" style={{ fontSize: 11 }} onClick={() => void smartRemixSelectedMusic()}>
+                  <Sparkles size={12} color="#34d399" /> Smart Music Remix (Tự khớp Video + Outro)
+                </button>
+
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {(audioSubTab === 'music' ? AUDIO_MUSIC_CATEGORIES : AUDIO_SFX_CATEGORIES).map((c) => (
+                    <button key={c.id} style={catPillStyle(audioCat === c.id)} onClick={() => setAudioCat(c.id)}>
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+
+                {(audioSubTab === 'music' ? filteredMusic : filteredSfx).map((item) => {
+                  const isPlaying = playingAudioId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('application/x-tcapcut-preset', JSON.stringify({ kind: 'audio', preset: item }));
+                      }}
+                      style={{
+                        padding: 9,
+                        borderRadius: 12,
+                        background: isPlaying ? 'rgba(52, 211, 153, 0.12)' : 'rgba(255,255,255,0.04)',
+                        border: isPlaying ? '1px solid rgba(52, 211, 153, 0.45)' : '1px solid rgba(255,255,255,0.08)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 6,
+                        cursor: 'grab',
+                      }}
+                    >
+                      <button
+                        className="glass-btn"
+                        style={{ padding: '6px 7px', flexShrink: 0 }}
+                        onClick={() => toggleAudioPreview(item.id, item.filename)}
+                        title={isPlaying ? 'Dừng nghe thử' : 'Nghe thử offline'}
+                      >
+                        {isPlaying ? <Pause size={12} color="#34d399" /> : <Play size={12} color="#67e8f9" />}
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                          {item.bpm > 0 && (
+                            <span className="mono" style={{ fontSize: 9.5, color: '#facc15', background: 'rgba(250,204,21,0.14)', padding: '1px 6px', borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                              {item.bpm} BPM
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {item.durationSec}s · {item.desc}
+                        </div>
+                      </div>
+                      {renderFavBtn(item.id)}
+                      <button className="glass-btn glass-btn-primary" style={{ padding: '5px 8px', fontSize: 11 }} onClick={() => void addBuiltinAudioToTimeline(item)}>
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </>
         )}
 
@@ -649,6 +730,118 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
           </>
         )}
 
+        {/* ======================== CAPTIONS (PHỤ ĐỀ TỰ ĐỘNG & KARAOKE) ======================== */}
+        {leftTab === 'captions' && (
+          <>
+            <div style={{ padding: 10, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: 7 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: '#67e8f9' }}>Tạo Phụ Đề &amp; Song Ngữ (Chuẩn CapCut Captions)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <button
+                  className="glass-btn glass-btn-primary"
+                  style={{ fontSize: 11 }}
+                  disabled={!activeAsset}
+                  onClick={() => activeAsset && void generateCaptionsFromTranscript(activeAsset.id)}
+                >
+                  <Wand2 size={12} /> Auto Captions
+                </button>
+                <button className="glass-btn" style={{ fontSize: 11 }} onClick={() => srtInputRef.current?.click()}>
+                  <Upload size={12} /> Nhập .SRT / .ASS
+                </button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <button
+                  className="glass-btn"
+                  style={{ fontSize: 10.5 }}
+                  disabled={!activeAsset}
+                  onClick={() => activeAsset && void runAiTask(activeAsset.id, 'remove-fillers')}
+                >
+                  <Scissors size={11} color="#f59e0b" /> Xóa Từ Thừa
+                </button>
+                <button
+                  className="glass-btn"
+                  style={{ fontSize: 10.5 }}
+                  disabled={selectedClip?.kind !== 'text'}
+                  onClick={() => void translateSelectedSubtitle('en')}
+                >
+                  Dịch Song Ngữ VI/EN
+                </button>
+              </div>
+              {!activeAsset && (
+                <div style={{ fontSize: 10.5, color: 'var(--text-secondary)' }}>Hãy nhập video hoặc tạo TTS để Auto-Captions nhận diện giọng nói.</div>
+              )}
+            </div>
+
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#fbbf24' }}>Mẫu Phụ Đề Karaoke Viral (8 kiểu CapCut)</div>
+            {TEXT_CATALOG.filter((p) => p.category === 'karaoke').map((preset) => (
+              <div
+                key={preset.id}
+                style={{
+                  padding: 9,
+                  borderRadius: 12,
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 6,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: preset.style.karaokeActiveColor || preset.style.color || '#fff' }}>{preset.name}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>{preset.desc}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button className="glass-btn" style={{ padding: '4px 7px', fontSize: 10.5 }} onClick={() => void applyKaraokeStyleAll(preset)}>
+                    Áp All
+                  </button>
+                  <button className="glass-btn glass-btn-primary" style={{ padding: '4px 7px', fontSize: 10.5 }} onClick={() => void addTextPresetClip(preset)}>
+                    <Plus size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {activeAsset?.transcript && activeAsset.transcript.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 4 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#67e8f9' }}>Transcript Rough-Cut ({activeAsset.transcript.length} câu)</div>
+                {activeAsset.transcript.slice(0, 12).map((seg) => (
+                  <div
+                    key={seg.id}
+                    onClick={() => setPlayheadUs(seg.startUs)}
+                    style={{
+                      padding: 7,
+                      borderRadius: 9,
+                      background: 'rgba(255,255,255,0.04)',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: 6,
+                    }}
+                  >
+                    <span>
+                      <strong className="mono" style={{ fontSize: 9.5, color: '#22d3ee', marginRight: 6 }}>
+                        {(seg.startUs / US_PER_SEC).toFixed(1)}s
+                      </strong>
+                      {seg.text}
+                    </span>
+                    <button
+                      className="glass-btn"
+                      style={{ padding: '2px 5px' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void deleteTranscriptSegmentFromVideo(seg.startUs, seg.endUs, seg.text);
+                      }}
+                    >
+                      <Trash2 size={11} color="#fb7185" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
         {/* ======================== STICKERS, LOTTIE & GPU PARTICLES TAB (30 PRESETS) ======================== */}
         {leftTab === 'stickers' && (
           <>
@@ -713,25 +906,46 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
           </>
         )}
 
-        {/* ======================== VFX 36 SHADERS TAB ======================== */}
+        {/* ======================== VIDEO EFFECTS & BODY EFFECTS (48 SHADERS) ======================== */}
         {leftTab === 'effects' && (
           <>
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {VFX_CATEGORIES.map((c) => (
-                <button key={c.id} style={catPillStyle(vfxCat === c.id)} onClick={() => setVfxCat(c.id)}>
-                  {c.label}
-                </button>
-              ))}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <button
+                className={`glass-btn ${effectSubTab === 'video' ? 'glass-btn-active' : ''}`}
+                style={{ fontSize: 11, padding: '6px' }}
+                onClick={() => setEffectSubTab('video')}
+              >
+                ✨ Video Effects (48)
+              </button>
+              <button
+                className={`glass-btn ${effectSubTab === 'body' ? 'glass-btn-active' : ''}`}
+                style={{ fontSize: 11, padding: '6px' }}
+                onClick={() => setEffectSubTab('body')}
+              >
+                🧍 Body Effects (6)
+              </button>
             </div>
 
+            {effectSubTab === 'video' && (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {VFX_CATEGORIES.map((c) => (
+                  <button key={c.id} style={catPillStyle(vfxCat === c.id)} onClick={() => setVfxCat(c.id)}>
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div style={{ fontSize: 10.5, color: 'var(--text-secondary)' }}>
-              {selectedClip && (selectedClip.kind === 'video' || selectedClip.kind === 'image')
-                ? `Đang chọn "${selectedClip.name}" — bấm + để xếp chồng Multi-FX GPU trên clip này`
-                : 'Bấm + để thả VFX Shader vào Effect Track (hỗ trợ xếp nhiều lớp đồng thời)'}
+              {effectSubTab === 'body'
+                ? 'Hiệu ứng viền / hào quang theo chủ thể (khuyên dùng kèm AI Tách nền trong Video → Remove BG).'
+                : selectedClip && (selectedClip.kind === 'video' || selectedClip.kind === 'image')
+                  ? `Đang chọn "${selectedClip.name}" — bấm + để xếp chồng Multi-FX GPU trên clip này`
+                  : 'Bấm + để thả VFX Shader vào Effect Track (hỗ trợ xếp nhiều lớp đồng thời)'}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              {filteredVfx.map((fx) => {
+              {(effectSubTab === 'body' ? VFX_CATALOG.filter((v) => BODY_FX_IDS.includes(v.id)) : filteredVfx).map((fx) => {
                 const isHover = hoveredVfxId === fx.id;
                 return (
                   <div
@@ -976,9 +1190,60 @@ export const LeftStudioPanel: React.FC<LeftStudioPanelProps> = ({ widthPx = 324 
           </>
         )}
 
-        {/* ======================== 12 SMART VIDEO TEMPLATES + UNIVERSAL TEMPLATE HUB ======================== */}
+        {/* ======================== ADJUSTMENT LAYERS (CAPCUT ADJUSTMENT) ======================== */}
+        {leftTab === 'adjustment' && (
+          <>
+            <button className="glass-btn glass-btn-primary" onClick={() => void addAdjustmentLayerClip()}>
+              <SlidersHorizontal size={13} /> + Tạo Custom Adjustment Layer
+            </button>
+            <button className="glass-btn" disabled={!selectedClip} onClick={() => void autoColorMatchToPreviousClip()}>
+              <Wand2 size={13} color="#34d399" /> Auto Color Match Với Clip Trước
+            </button>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Thả Adjustment Layer lên Track trên để áp chỉnh màu đồng loạt cho mọi cảnh bên dưới:
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {ADJUSTMENT_PRESETS.map((ap) => (
+                <div
+                  key={ap.id}
+                  style={{
+                    padding: 10,
+                    borderRadius: 12,
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.09)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{ap.name}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>{ap.desc}</div>
+                  </div>
+                  <button
+                    className="glass-btn glass-btn-primary"
+                    style={{ padding: '4px 9px', fontSize: 11 }}
+                    onClick={() => void addAdjustmentLayerClip(ap.grade, ap.name)}
+                  >
+                    <Plus size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* ======================== 24 SMART VIDEO TEMPLATES + UNIVERSAL TEMPLATE HUB ======================== */}
         {leftTab === 'templates' && (
           <>
+            <button
+              className="glass-btn glass-btn-primary"
+              style={{ justifyContent: 'center', padding: '9px 10px', fontWeight: 700 }}
+              onClick={() => setTemplateHubOpen(true)}
+            >
+              <LayoutTemplate size={14} /> Mở Kho Mẫu Lớn (24+ Templates &amp; CapCut Import)
+            </button>
             <div style={{ padding: 8, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ fontSize: 10.5, fontWeight: 700, color: '#67e8f9' }}>Universal Template Hub (Đa Nền Tảng)</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>

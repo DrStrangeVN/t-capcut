@@ -7,6 +7,7 @@ import {
   Download,
   FolderPlus,
   History,
+  LayoutTemplate,
   PanelLeftClose,
   PanelRightClose,
   Redo2,
@@ -20,6 +21,7 @@ import { HistoryDrawer } from './components/HistoryDrawer';
 import { LeftStudioPanel } from './components/LeftStudioPanel';
 import { PlayerViewport } from './components/PlayerViewport';
 import { RightInspector } from './components/RightInspector';
+import { TemplateHubModal } from './components/TemplateHubModal';
 import { TemplateModal } from './components/TemplateModal';
 import { TimelineCanvas } from './components/TimelineCanvas';
 import { playbackClock } from './engine/PlaybackClock';
@@ -57,6 +59,8 @@ export const App: React.FC = () => {
   const fullscreenPreview = useEditorStore((s) => s.fullscreenPreview);
   const setFullscreenPreview = useEditorStore((s) => s.setFullscreenPreview);
   const setCommandPaletteOpen = useEditorStore((s) => s.setCommandPaletteOpen);
+  const templateHubOpen = useEditorStore((s) => s.templateHubOpen);
+  const setTemplateHubOpen = useEditorStore((s) => s.setTemplateHubOpen);
   const setStatusMessage = useEditorStore((s) => s.setStatusMessage);
   const setErrorMessage = useEditorStore((s) => s.setErrorMessage);
 
@@ -323,6 +327,20 @@ export const App: React.FC = () => {
             <Cpu size={13} /> Proxy
           </button>
 
+          <button
+            className={`glass-btn ${templateHubOpen ? 'glass-btn-active' : ''}`}
+            style={{
+              background: 'linear-gradient(135deg, rgba(168,85,247,0.28), rgba(34,211,238,0.28))',
+              borderColor: 'rgba(192,132,252,0.45)',
+              color: '#f5f3ff',
+              fontWeight: 700,
+            }}
+            onClick={() => setTemplateHubOpen(true)}
+            title="Mở Kho Mẫu CapCut (24+ Mẫu & Nhập draft_content.json / .capcut)"
+          >
+            <LayoutTemplate size={13} color="#c084fc" /> Kho Mẫu 24+
+          </button>
+
           <button className="glass-btn" onClick={() => setCommandPaletteOpen(true)} title="Command Palette Tìm Nhanh (Cmd+P)">
             <Command size={13} color="#a78bfa" /> <span className="mono" style={{ fontSize: 10 }}>⌘P</span>
           </button>
@@ -408,6 +426,7 @@ export const App: React.FC = () => {
       )}
 
       <HistoryDrawer />
+      <TemplateHubModal />
       <TemplateModal />
       <CommandPaletteModal />
       <ChatCutModal />

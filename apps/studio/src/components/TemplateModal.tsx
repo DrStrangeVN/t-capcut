@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Film, Sparkles, Wand2, X } from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import { Film, Sparkles, Type, Upload, Wand2, X } from 'lucide-react';
 import { US_PER_SEC, type MediaAsset } from '@t-capcut/schema';
 import { AUDIO_BY_ID, LUT_BY_ID } from '@t-capcut/presets';
 import { useEditorStore } from '../store/useEditorStore';
@@ -13,9 +13,15 @@ export const TemplateModal: React.FC = () => {
   const applyTemplateProject = useEditorStore((s) => s.applyTemplateProject);
   const replaceClipAsset = useEditorStore((s) => s.replaceClipAsset);
   const createDemoSample = useEditorStore((s) => s.createDemoSample);
+  const uploadMediaFile = useEditorStore((s) => s.uploadMediaFile);
 
+  const slotUploadRef = useRef<HTMLInputElement | null>(null);
+  const pendingSlotIdxRef = useRef<number | 'bulk'>('bulk');
+
+  const [modalTab, setModalTab] = useState<'slots' | 'text'>('slots');
   const [slotMap, setSlotMap] = useState<Record<number, string>>({});
   const [slotSlipUs, setSlotSlipUs] = useState<Record<number, number>>({});
+  const [textOverrides, setTextOverrides] = useState<Record<number, string>>({});
 
   const visualAssets: MediaAsset[] = useMemo(() => {
     if (!project) return [];
@@ -124,7 +130,19 @@ export const TemplateModal: React.FC = () => {
       if (explicitId && project?.assets[explicitId]) return project.assets[explicitId]!;
       return visualAssets.length > 0 ? visualAssets[idx % visualAssets.length]! : null;
     });
-    await applyTemplateProject(template, resolved);
+    await applyTemplateProject(template, resolved, { slotSlipUs, textOverrides });
+  };
+
+  const handleQuickDemoBuild = async () => {
+    await createDemoSample();
+    const freshProj = useEditorStore.getState().project;
+    const assets = freshProj
+      ? Object.values(freshProj.assets).filter((a) => a.kind === 'video' || a.kind === 'image')
+      : [];
+    if (assets.length > 0) {
+      const resolved = template.slots.map((_, idx) => assets[idx % assets.length]!);
+      await applyTemplateProject(template, resolved, { slotSlipUs, textOverrides });
+    }
   };
 
   return (
@@ -200,89 +218,197 @@ export const TemplateModal: React.FC = () => {
             )}
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Chọn Video / Ảnh cho {template.slots.length} cảnh (Slot Replacement):
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 5 }}>
+              <button
+                className={`glass-btn ${modalTab === 'slots' ? 'glass-btn-active' : ''}`}
+                style={{ fontSize: 11.5 }}
+                onClick={() => setModalTab('slots')}
+              >
+                <Film size={12} /> Cảnh ({template.slots.length} Slots)
+              </button>
+              <button
+                className={`glass-btn ${modalTab === 'text' ? 'glass-btn-active' : ''}`}
+                style={{ fontSize: 11.5 }}
+                onClick={() => setModalTab('text')}
+              >
+                <Type size={12} /> Chữ trong Mẫu ({template.texts.length})
+              </button>
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button
+                className="glass-btn"
+                onClick={() => {
+                  pendingSlotIdxRef.current = 'bulk';
+                  slotUploadRef.current?.click();
+                }}
+              >
+                <Upload size={12} color="#22d3ee" /> Tải Media Từ Máy
+              </button>
               {visualAssets.length === 0 && (
-                <button className="glass-btn" onClick={() => void createDemoSample()}>
-                  <Sparkles size={13} color="#22d3ee" /> Tạo Video Mẫu Trước
+                <button className="glass-btn glass-btn-primary" onClick={() => void handleQuickDemoBuild()}>
+                  <Sparkles size={13} /> Dùng Thử Với Video Mẫu
                 </button>
               )}
-              <button className="glass-btn" disabled={visualAssets.length === 0} onClick={handleAutoFill}>
-                Auto-Fill Từ Media Bin
-              </button>
+              {visualAssets.length > 0 && (
+                <button className="glass-btn" onClick={handleAutoFill}>
+                  Auto-Fill ({visualAssets.length})
+                </button>
+              )}
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
-            {template.slots.map((slot, idx) => {
-              const selectedId =
-                slotMap[idx] ?? (visualAssets.length > 0 ? visualAssets[idx % visualAssets.length]!.id : '');
-              return (
-                <div
-                  key={slot.id}
-                  style={{
-                    padding: 10,
-                    borderRadius: 12,
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontWeight: 600 }}>
-                    <span>
-                      #{idx + 1} · {slot.label}
-                    </span>
-                    <span className="mono" style={{ color: '#67e8f9' }}>
-                      {(slot.durationUs / US_PER_SEC).toFixed(2)}s
-                    </span>
-                  </div>
-                  <select
-                    className="glass-input"
-                    value={selectedId}
-                    onChange={(e) => setSlotMap((prev) => ({ ...prev, [idx]: e.target.value }))}
+          <input
+            ref={slotUploadRef}
+            type="file"
+            multiple
+            accept="video/*,image/*"
+            style={{ display: 'none' }}
+            onChange={async (e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              if (files.length === 0) return;
+              const uploaded: MediaAsset[] = [];
+              for (const f of files) {
+                const a = await uploadMediaFile(f);
+                if (a) uploaded.push(a);
+              }
+              if (uploaded.length > 0) {
+                if (pendingSlotIdxRef.current === 'bulk') {
+                  setSlotMap((prev) => {
+                    const next = { ...prev };
+                    uploaded.forEach((a, ui) => {
+                      const targetSlot = ui % template.slots.length;
+                      next[targetSlot] = a.id;
+                    });
+                    return next;
+                  });
+                } else {
+                  const targetIdx = pendingSlotIdxRef.current;
+                  setSlotMap((prev) => ({ ...prev, [targetIdx]: uploaded[0]!.id }));
+                }
+              }
+            }}
+          />
+
+          {modalTab === 'slots' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+              {template.slots.map((slot, idx) => {
+                const selectedId =
+                  slotMap[idx] ?? (visualAssets.length > 0 ? visualAssets[idx % visualAssets.length]!.id : '');
+                return (
+                  <div
+                    key={slot.id}
+                    style={{
+                      padding: 10,
+                      borderRadius: 12,
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    }}
                   >
-                    {visualAssets.length === 0 && <option value="">-- Chưa có video/ảnh trong Media Bin --</option>}
-                    {visualAssets.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name} ({(a.durationUs / US_PER_SEC).toFixed(1)}s)
-                      </option>
-                    ))}
-                  </select>
-                  {(() => {
-                    const matchedAsset = visualAssets.find((a) => a.id === selectedId);
-                    const maxSlipSec = Math.max(0, ((matchedAsset?.durationUs ?? 0) - slot.durationUs) / US_PER_SEC);
-                    if (!matchedAsset || maxSlipSec <= 0.2) return null;
-                    const curSlipSec = (slotSlipUs[idx] ?? 0) / US_PER_SEC;
-                    return (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-secondary)' }}>
-                        <span>In: {curSlipSec.toFixed(1)}s</span>
-                        <input
-                          type="range"
-                          className="glass-slider"
-                          min={0}
-                          max={maxSlipSec}
-                          step={0.1}
-                          value={curSlipSec}
-                          onChange={(e) => setSlotSlipUs((prev) => ({ ...prev, [idx]: Math.round(Number(e.target.value) * US_PER_SEC) }))}
-                        />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, fontWeight: 600 }}>
+                      <span>
+                        #{idx + 1} · {slot.label}
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="mono" style={{ color: '#67e8f9' }}>
+                          {(slot.durationUs / US_PER_SEC).toFixed(2)}s
+                        </span>
+                        <button
+                          className="glass-btn"
+                          style={{ padding: '2px 6px', fontSize: 10 }}
+                          onClick={() => {
+                            pendingSlotIdxRef.current = idx;
+                            slotUploadRef.current?.click();
+                          }}
+                          title="Tải video/ảnh riêng cho cảnh này"
+                        >
+                          <Upload size={10} /> Tải
+                        </button>
                       </div>
-                    );
-                  })()}
-                  <div style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {slot.transitionId && <span>⇄ {slot.transitionId}</span>}
-                    {slot.vfxId && <span>✨ {slot.vfxId}</span>}
-                    {slot.speedMode === 'curve' && <span>⚡ Curve ({slot.speedPreset})</span>}
-                    {slot.kenBurnsZoom && <span>🔍 Ken Burns</span>}
+                    </div>
+                    <select
+                      className="glass-input"
+                      value={selectedId}
+                      onChange={(e) => setSlotMap((prev) => ({ ...prev, [idx]: e.target.value }))}
+                    >
+                      {visualAssets.length === 0 && <option value="">-- Bấm + Tải hoặc Dùng Thử Với Video Mẫu --</option>}
+                      {visualAssets.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({(a.durationUs / US_PER_SEC).toFixed(1)}s)
+                        </option>
+                      ))}
+                    </select>
+                    {(() => {
+                      const matchedAsset = visualAssets.find((a) => a.id === selectedId);
+                      const maxSlipSec = Math.max(0, ((matchedAsset?.durationUs ?? 0) - slot.durationUs) / US_PER_SEC);
+                      if (!matchedAsset || maxSlipSec <= 0.2) return null;
+                      const curSlipSec = (slotSlipUs[idx] ?? 0) / US_PER_SEC;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-secondary)' }}>
+                          <span>In: {curSlipSec.toFixed(1)}s</span>
+                          <input
+                            type="range"
+                            className="glass-slider"
+                            min={0}
+                            max={maxSlipSec}
+                            step={0.1}
+                            value={curSlipSec}
+                            onChange={(e) => setSlotSlipUs((prev) => ({ ...prev, [idx]: Math.round(Number(e.target.value) * US_PER_SEC) }))}
+                          />
+                        </div>
+                      );
+                    })()}
+                    <div style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {slot.transitionId && <span>⇄ {slot.transitionId}</span>}
+                      {slot.vfxId && <span>✨ {slot.vfxId}</span>}
+                      {slot.speedMode === 'curve' && <span>⚡ Curve ({slot.speedPreset})</span>}
+                      {slot.kenBurnsZoom && <span>🔍 Ken Burns</span>}
+                    </div>
                   </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {template.texts.length === 0 ? (
+                <div style={{ padding: 20, textAlign: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Mẫu này không có lớp chữ mặc định — bạn có thể tự thêm chữ trên Timeline sau khi dựng.
                 </div>
-              );
-            })}
-          </div>
+              ) : (
+                template.texts.map((ts, ti) => (
+                  <div
+                    key={ti}
+                    style={{
+                      padding: 10,
+                      borderRadius: 12,
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#fbbf24', fontWeight: 700 }}>
+                      <span>Dòng chữ #{ti + 1} {ts.karaoke ? '· Karaoke Pop' : '· Tiêu đề'}</span>
+                      <span className="mono" style={{ color: 'var(--text-secondary)' }}>
+                        {(ts.startUs / US_PER_SEC).toFixed(1)}s → {((ts.startUs + ts.durationUs) / US_PER_SEC).toFixed(1)}s
+                      </span>
+                    </div>
+                    <input
+                      className="glass-input"
+                      value={textOverrides[ti] ?? ts.text}
+                      onChange={(e) => setTextOverrides((prev) => ({ ...prev, [ti]: e.target.value }))}
+                      placeholder={ts.text}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
         <div

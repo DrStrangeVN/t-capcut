@@ -302,6 +302,14 @@ export interface MotionTrackPoint {
   scale?: number;
 }
 
+export interface ClipAnimationState {
+  in?: 'none' | 'fade_in' | 'zoom_in' | 'slide_left' | 'slide_right' | 'slide_up' | 'slide_down' | 'shake_in' | 'bounce_in' | 'spin_in';
+  out?: 'none' | 'fade_out' | 'zoom_out' | 'slide_left' | 'slide_right' | 'slide_down' | 'spin_out';
+  combo?: 'none' | 'pendulum' | 'wobble' | 'beat_pulse' | 'zoom_bounce' | 'distort_swing';
+  inDurationUs?: Microseconds;
+  outDurationUs?: Microseconds;
+}
+
 export interface Clip {
   id: string;
   trackId: string;
@@ -330,6 +338,8 @@ export interface Clip {
   prerenderHash?: string | null;
   compoundTimelineId?: string | null;
   motionTrackPoints?: MotionTrackPoint[];
+  animation?: ClipAnimationState;
+  retouch?: { smoothSkin: number; brighten: number; glow: number };
 }
 
 export interface Track {

@@ -1,5 +1,6 @@
 import {
   type Clip,
+  type ClipAnimationState,
   type MediaAsset,
   type Project,
   type Track,
@@ -115,6 +116,13 @@ export interface CapCutDraftContent {
     effects?: CapCutMaterialRef[];
     audio_fades?: CapCutMaterialRef[];
     filters?: CapCutMaterialRef[];
+    material_animations?: Array<{
+      id: string;
+      name?: string;
+      type?: string;
+      duration?: number;
+      animations?: Array<{ type?: string; name?: string; category_id?: string; duration?: number }>;
+    }>;
   };
   tracks: CapCutTrack[];
 }
@@ -143,9 +151,10 @@ function mapTrackTypeToCapCut(t: TrackType): CapCutTrack['type'] {
 }
 
 function extractRichText(raw: string): { text: string; color?: string; strokeColor?: string; fontSize?: number } {
-  if (raw.startsWith('{')) {
+  const trimmed = (raw ?? '').trim();
+  if (trimmed.startsWith('{')) {
     try {
-      const parsed = JSON.parse(raw) as {
+      const parsed = JSON.parse(trimmed) as {
         text?: string;
         styles?: Array<{ fill?: { content?: { solid?: { color?: number[] } } }; strokes?: Array<{ content?: { solid?: { color?: number[] } } }>; size?: number }>;
       };
@@ -155,7 +164,7 @@ function extractRichText(raw: string): { text: string; color?: string; strokeCol
           ? `#${rgb.slice(0, 3).map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('')}`
           : undefined;
       return {
-        text: typeof parsed.text === 'string' ? parsed.text : raw,
+        text: typeof parsed.text === 'string' ? parsed.text : trimmed,
         color: toHex(firstStyle?.fill?.content?.solid?.color),
         strokeColor: toHex(firstStyle?.strokes?.[0]?.content?.solid?.color),
         fontSize: typeof firstStyle?.size === 'number' ? Math.round(firstStyle.size * 6) : undefined,
@@ -164,7 +173,7 @@ function extractRichText(raw: string): { text: string; color?: string; strokeCol
       // fall through
     }
   }
-  return { text: raw };
+  return { text: trimmed || raw };
 }
 
 function mapExternalTransitionId(rawName: string): string {
@@ -215,6 +224,46 @@ function mapExternalLutId(rawName: string): string | null {
   if (/golden|warm|sunset/.test(q)) return 'lut_golden_hour';
   if (/food|vivid|vibrant/.test(q)) return 'lut_food_vibrant';
   return null;
+}
+
+function mapExternalAnimation(
+  rawName: string,
+  animType?: string,
+  duration?: number,
+  target: ClipAnimationState = {}
+): ClipAnimationState {
+  const q = rawName.toLowerCase();
+  const kind = (animType ?? '').toLowerCase();
+  const dur = duration && duration > 0 ? duration : 500_000;
+  if (kind === 'group' || kind === 'combo' || /pendulum|wobble|beat|distort/.test(q)) {
+    if (/wobble/.test(q)) target.combo = 'wobble';
+    else if (/beat|pulse/.test(q)) target.combo = 'beat_pulse';
+    else if (/bounce/.test(q)) target.combo = 'zoom_bounce';
+    else if (/distort|swing/.test(q)) target.combo = 'distort_swing';
+    else target.combo = 'pendulum';
+    return target;
+  }
+  if (kind === 'out' || /fade.*out|zoom.*out/.test(q)) {
+    target.outDurationUs = dur;
+    if (/zoom/.test(q)) target.out = 'zoom_out';
+    else if (/left/.test(q)) target.out = 'slide_left';
+    else if (/right/.test(q)) target.out = 'slide_right';
+    else if (/down/.test(q)) target.out = 'slide_down';
+    else if (/spin/.test(q)) target.out = 'spin_out';
+    else target.out = 'fade_out';
+    return target;
+  }
+  target.inDurationUs = dur;
+  if (/zoom/.test(q)) target.in = 'zoom_in';
+  else if (/left/.test(q)) target.in = 'slide_left';
+  else if (/right/.test(q)) target.in = 'slide_right';
+  else if (/up/.test(q)) target.in = 'slide_up';
+  else if (/down/.test(q)) target.in = 'slide_down';
+  else if (/shake/.test(q)) target.in = 'shake_in';
+  else if (/bounce/.test(q)) target.in = 'bounce_in';
+  else if (/spin/.test(q)) target.in = 'spin_in';
+  else target.in = 'fade_in';
+  return target;
 }
 
 export function exportToCapCutDraft(project: Project): CapCutDraftContent {
@@ -329,7 +378,8 @@ export function exportToCapCutDraft(project: Project): CapCutDraftContent {
 export function importFromCapCutDraftDetailed(
   draft: CapCutDraftContent,
   projectId?: string,
-  checkPathExists?: (filePath: string) => boolean
+  checkPathExists?: (filePath: string) => boolean,
+  pathResolver?: (originalPath: string) => string | null
 ): { project: Project; report: CapCutImportReport } {
   const id = projectId ?? draft.id ?? `proj_${Date.now()}`;
   const project = createEmptyProject(id, draft.name || 'Imported CapCut Draft');
@@ -353,11 +403,13 @@ export function importFromCapCutDraftDetailed(
   }
 
   for (const v of draft.materials?.videos ?? []) {
+    const rawPath = v.path || v.material_name || '';
+    const resolvedPath = pathResolver?.(rawPath) ?? rawPath;
     const asset: MediaAsset = {
       id: v.id,
-      name: v.material_name || v.path.split('/').pop() || 'Video',
+      name: v.material_name || rawPath.split('/').pop() || 'Video',
       kind: v.type === 'photo' ? 'image' : 'video',
-      sourcePath: v.path,
+      sourcePath: resolvedPath,
       durationUs: v.duration || 5 * US_PER_SEC,
       width: v.width || 1920,
       height: v.height || 1080,
@@ -371,11 +423,13 @@ export function importFromCapCutDraftDetailed(
   }
 
   for (const a of draft.materials?.audios ?? []) {
+    const rawPath = a.path || a.name || '';
+    const resolvedPath = pathResolver?.(rawPath) ?? rawPath;
     project.assets[a.id] = {
       id: a.id,
-      name: a.name || a.path.split('/').pop() || 'Audio',
+      name: a.name || rawPath.split('/').pop() || 'Audio',
       kind: 'audio',
-      sourcePath: a.path,
+      sourcePath: resolvedPath,
       durationUs: a.duration || 10 * US_PER_SEC,
       width: 0,
       height: 0,
@@ -393,6 +447,7 @@ export function importFromCapCutDraftDetailed(
   const vfxMap = new Map([...(draft.materials?.video_effects ?? []), ...(draft.materials?.effects ?? [])].map((e) => [e.id, e]));
   const fadeMap = new Map((draft.materials?.audio_fades ?? []).map((f) => [f.id, f]));
   const filterMap = new Map((draft.materials?.filters ?? []).map((f) => [f.id, f]));
+  const animMap = new Map((draft.materials?.material_animations ?? []).map((m) => [m.id, m]));
 
   const tracks: Track[] = [];
   let seenMainVideo = false;
@@ -474,6 +529,7 @@ export function importFromCapCutDraftDetailed(
       const colorGrade = createDefaultColorGrade();
       const effects: Clip['effects'] = [];
       let transitionIn: Clip['transitionIn'] = null;
+      let clipAnimation: ClipAnimationState | undefined;
 
       for (const refId of seg.extra_material_refs ?? []) {
         const sp = speedMap.get(refId);
@@ -527,6 +583,17 @@ export function importFromCapCutDraftDetailed(
             fallbackItems.push(`Filter "${flt.name || refId}" (dùng màu trung tính)`);
           }
         }
+        const animMat = animMap.get(refId);
+        if (animMat) {
+          clipAnimation = clipAnimation ?? {};
+          const items = animMat.animations && animMat.animations.length > 0
+            ? animMat.animations
+            : [{ name: animMat.name ?? 'Fade In', type: animMat.type ?? 'in', duration: animMat.duration ?? 500_000 }];
+          for (const a of items) {
+            mapExternalAnimation(a.name || a.category_id || '', a.type, a.duration, clipAnimation);
+            mappedItems.push(`Animation: ${a.name || a.type || 'in'}`);
+          }
+        }
       }
 
       const keyframes: Clip['keyframes'] = {};
@@ -570,6 +637,7 @@ export function importFromCapCutDraftDetailed(
           : undefined,
         transitionIn,
         effects,
+        animation: clipAnimation,
         aiMattingEnabled: false,
         autoReframeEnabled: false,
       };
